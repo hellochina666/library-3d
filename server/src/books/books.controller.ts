@@ -8,10 +8,11 @@ export class BooksController {
   /**
    * GET /books?q=明朝  —— 搜索，返回带定位信息（供 3D 高亮）
    * GET /books?layerId=3 —— 列出某层所有书
+   * GET /books?libraryId=2 —— 只看某个图书馆的书
    */
   @Get()
-  findAll(@Query('q') q?: string, @Query('layerId') layerId?: string) {
-    return this.service.search(q, layerId ? Number(layerId) : undefined);
+  findAll(@Query('q') q?: string, @Query('layerId') layerId?: string, @Query('libraryId') libraryId?: string) {
+    return this.service.search(q, layerId ? Number(layerId) : undefined, libraryId ? Number(libraryId) : undefined);
   }
 
   /** POST /books —— 新增书籍，body 必须含 shelfId / layerId / slotIndex */

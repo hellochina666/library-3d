@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import type { ShelfType } from '@prisma/client';
 import { PrismaService } from '../prisma.service';
+import { assertFits, type Footprint } from './placement';
 
 export interface CreateShelfTypeDto {
   name: string;
@@ -13,6 +14,7 @@ export interface CreateShelfTypeDto {
 
 export interface CreateShelfDto {
   code: string;
+  libraryId: number;
   typeId: number;
   posX?: number;
   posZ?: number;
@@ -33,6 +35,8 @@ export interface LayoutItemDto {
 }
 
 export interface ApplyLayoutDto {
+  /** 目标图书馆；缺省用第一个馆 */
+  libraryId?: number;
   /** 是否先清空现有全部书架（连带书）。默认 true —— 表格代表图书馆全貌 */
   clear?: boolean;
   /** 同排相邻书架间隙（米），默认 0.5 */
@@ -71,10 +75,11 @@ export class ShelvesService {
 
   /**
    * 书架树：书架 + 型号 + 各层（含该层藏书数）
-   * 前端 3D 场景完全靠这份数据程序化渲染。
+   * 前端 3D 场景完全靠这份数据程序化渲染。libraryId 提供时只返回该馆。
    */
-  findAll() {
+  findAll(libraryId?: number) {
     return this.prisma.shelf.findMany({
+      where: libraryId ? { libraryId: Number(libraryId) } : undefined,
       orderBy: { code: 'asc' },
       include: {
         type: true,
@@ -103,27 +108,40 @@ export class ShelvesService {
   }
 
   /**
-   * 新增书架：按型号的 layerCount 自动展开生成对应的层。
-   * 这样「每个书架层数不同」在数据层就得到保证。
+   * 新增书架：必须指定所属图书馆；位置要与馆内其他书架满足间距规则。
+   * 按型号的 layerCount 自动展开生成对应的层。
    */
   async create(dto: CreateShelfDto) {
     if (!dto?.code) throw new BadRequestException('书架编号 code 必填');
     const typeId = Number(dto.typeId);
     if (!Number.isInteger(typeId)) throw new BadRequestException('typeId 必须是整数');
+    const libraryId = Number(dto.libraryId);
+    if (!Number.isInteger(libraryId)) throw new BadRequestException('必须指定 libraryId（属于哪个图书馆）');
+
+    const library = await this.prisma.library.findUnique({ where: { id: libraryId } });
+    if (!library) throw new NotFoundException(`图书馆 #${libraryId} 不存在`);
 
     const type = await this.prisma.shelfType.findUnique({ where: { id: typeId } });
     if (!type) throw new NotFoundException(`书架型号 #${typeId} 不存在`);
 
-    const exists = await this.prisma.shelf.findUnique({ where: { code: dto.code } });
-    if (exists) throw new BadRequestException(`书架编号 ${dto.code} 已存在`);
+    const exists = await this.prisma.shelf.findUnique({
+      where: { libraryId_code: { libraryId, code: dto.code } },
+    });
+    if (exists) throw new BadRequestException(`本馆已有书架编号 ${dto.code}`);
+
+    const posX = dto.posX ?? 0;
+    const posZ = dto.posZ ?? 0;
+    const rotation = dto.rotation ?? 0;
+    await this.assertPlacementFits(libraryId, { type, posX, posZ, rotation });
 
     return this.prisma.shelf.create({
       data: {
         code: dto.code,
+        libraryId,
         typeId,
-        posX: dto.posX ?? 0,
-        posZ: dto.posZ ?? 0,
-        rotation: dto.rotation ?? 0,
+        posX,
+        posZ,
+        rotation,
         zone: dto.zone ?? null,
         // 自动按层数展开
         layers: {
@@ -137,6 +155,37 @@ export class ShelvesService {
     });
   }
 
+  /** 间距校验：候选位置 vs 馆内已落位的书架 */
+  private async assertPlacementFits(
+    libraryId: number,
+    candidate: { type: ShelfType; posX: number; posZ: number; rotation: number },
+    excludeShelfId?: number,
+  ) {
+    const others = await this.prisma.shelf.findMany({
+      where: { libraryId, ...(excludeShelfId ? { id: { not: excludeShelfId } } : {}) },
+      include: { type: true },
+    });
+    const foot = (s: { code: string; posX: number; posZ: number; rotation: number; type: ShelfType }) =>
+      ({
+        code: s.code,
+        width: s.type.width,
+        depth: s.type.depth,
+        posX: s.posX,
+        posZ: s.posZ,
+        rotation: s.rotation,
+      }) as Footprint & { code: string };
+    assertFits(
+      {
+        width: candidate.type.width,
+        depth: candidate.type.depth,
+        posX: candidate.posX,
+        posZ: candidate.posZ,
+        rotation: candidate.rotation,
+      },
+      others.map(foot),
+    );
+  }
+
   /** 调整书架：编号 / 物理位置 / 朝向 / 区域（现实中挪了架子就改这里） */
   async update(
     id: number,
@@ -146,8 +195,10 @@ export class ShelvesService {
     const data: any = {};
 
     if (dto.code != null && dto.code !== current.code) {
-      const dup = await this.prisma.shelf.findUnique({ where: { code: dto.code } });
-      if (dup) throw new BadRequestException(`书架编号 ${dto.code} 已存在`);
+      const dup = await this.prisma.shelf.findFirst({
+        where: { libraryId: current.libraryId, code: dto.code },
+      });
+      if (dup) throw new BadRequestException(`本馆已有书架编号 ${dto.code}`);
       data.code = dto.code;
     }
     if (dto.posX != null) data.posX = Number(dto.posX);
@@ -156,6 +207,21 @@ export class ShelvesService {
     if (dto.zone !== undefined) data.zone = dto.zone || null;
 
     if (Object.keys(data).length === 0) return current;
+
+    // 挪动位置/朝向同样要过间距校验
+    if (data.posX != null || data.posZ != null || data.rotation != null) {
+      await this.assertPlacementFits(
+        current.libraryId,
+        {
+          type: current.type,
+          posX: data.posX ?? current.posX,
+          posZ: data.posZ ?? current.posZ,
+          rotation: data.rotation ?? current.rotation,
+        },
+        id,
+      );
+    }
+
     return this.prisma.shelf.update({
       where: { id },
       data,
@@ -226,10 +292,21 @@ export class ShelvesService {
     const rowGap = Number.isFinite(Number(dto.rowGap)) && Number(dto.rowGap) >= 0 ? Number(dto.rowGap) : 1.2;
     const clear = dto.clear !== false;
 
+    // ---- 目标图书馆 ----
+    let libraryId = Number(dto.libraryId) || 0;
+    if (libraryId) {
+      const lib = await this.prisma.library.findUnique({ where: { id: libraryId } });
+      if (!lib) throw new NotFoundException(`图书馆 #${libraryId} 不存在`);
+    } else {
+      const first = await this.prisma.library.findFirst({ orderBy: { id: 'asc' } });
+      if (!first) throw new BadRequestException('尚无任何图书馆，请先创建');
+      libraryId = first.id;
+    }
+
     // ---- 现有数据规模（用于返回统计）----
     const [oldShelves, oldBooks] = await Promise.all([
-      this.prisma.shelf.count(),
-      this.prisma.book.count(),
+      this.prisma.shelf.count({ where: { libraryId } }),
+      this.prisma.book.count({ where: { shelf: { libraryId } } }),
     ]);
 
     // ---- 按层数解析型号（复用优先，缺则自动建）----
@@ -265,7 +342,7 @@ export class ShelvesService {
     const created = await this.prisma.$transaction(async (tx) => {
       if (clear) {
         // Layer/Book 对 Shelf 是级联删除（schema onDelete: Cascade），deleteMany 一并清掉
-        await tx.shelf.deleteMany({});
+        await tx.shelf.deleteMany({ where: { libraryId } });
       }
       const list = [];
       for (const it of items) {
@@ -273,6 +350,7 @@ export class ShelvesService {
         const shelf = await tx.shelf.create({
           data: {
             code: String(it.code).trim(),
+            libraryId,
             typeId: type.id,
             posX: Number((it.col * stepX).toFixed(3)),
             posZ: Number((it.row * stepZ).toFixed(3)),

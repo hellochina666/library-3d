@@ -65,6 +65,7 @@ button:hover { background: #333b45; }
 button.primary { background: #f5b942; color: #1b1f26; border-color: #f5b942; font-weight: 600; }
 button.primary:hover { background: #ffc85c; }
 button.ghost { background: transparent; border-color: #3a4450; color: #aab3bd; }
+button.ghost.danger { color: #ff8a8a; border-color: #5a3030; }
 
 .row { display: flex; gap: 8px; align-items: center; margin: 8px 0; }
 .row button { flex-shrink: 0; }

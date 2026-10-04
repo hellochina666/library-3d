@@ -1,14 +1,14 @@
-import { Body, Controller, Delete, Get, Param, Post, Put } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Put, Query } from '@nestjs/common';
 import { ShelvesService } from './shelves.service';
 
 @Controller('shelves')
 export class ShelvesController {
   constructor(private readonly service: ShelvesService) {}
 
-  /** GET /shelves —— 3D 场景渲染所需的完整布局数据 */
+  /** GET /shelves?libraryId=2 —— 3D 场景渲染所需的完整布局数据（按馆） */
   @Get()
-  findAll() {
-    return this.service.findAll();
+  findAll(@Query('libraryId') libraryId?: string) {
+    return this.service.findAll(libraryId ? Number(libraryId) : undefined);
   }
 
   /**

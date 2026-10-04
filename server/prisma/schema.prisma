@@ -17,6 +17,14 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+/// 图书馆：一个馆 = 一套独立的 3D 布局，可在前端切换
+model Library {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique
+  shelves   Shelf[]
+  createdAt DateTime @default(now())
+}
+
 /// 书架型号：定义层数与各层尺寸
 model ShelfType {
   id            Int      @id @default(autoincrement())
@@ -38,10 +46,12 @@ model ShelfType {
 /// 现实中的一个具体书架（3D 场景按此摆放）
 model Shelf {
   id      Int       @id @default(autoincrement())
-  /// 书架编号，如 "A-01"
-  code    String    @unique
-  typeId  Int
-  type    ShelfType @relation(fields: [typeId], references: [id])
+  /// 书架编号，如 "A-01"（同一图书馆内唯一）
+  code      String
+  libraryId Int
+  library   Library @relation(fields: [libraryId], references: [id], onDelete: Cascade)
+  typeId    Int
+  type      ShelfType @relation(fields: [typeId], references: [id])
   /// 3D 世界坐标 X（米）
   posX    Float     @default(0)
   /// 3D 世界坐标 Z（米）
@@ -54,7 +64,9 @@ model Shelf {
   books   Book[]
   createdAt DateTime @default(now())
 
+  @@unique([libraryId, code])
   @@index([zone])
+  @@index([libraryId])
 }
 
 /// 书架的某一层（创建书架时按型号自动生成）

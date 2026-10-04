@@ -8,7 +8,7 @@ import { AddBookForm } from './ui/AddBookForm';
 import { ShelfManager } from './ui/ShelfManager';
 import { ShelfTypeManager } from './ui/ShelfTypeManager';
 import { StatsPanel } from './ui/StatsPanel';
-import { LayoutGrid } from './ui/LayoutGrid';
+import { PlacementPanel } from './ui/PlacementPanel';
 
 /** 检测浏览器是否支持 WebGL，避免不支持时整页白屏 */
 function detectWebGL() {
@@ -23,23 +23,40 @@ function detectWebGL() {
 const TABS = [
   { key: 'search', label: '检索' },
   { key: 'manage', label: '管理' },
-  { key: 'layout', label: '布局' },
+  { key: 'layout', label: '摆放' },
   { key: 'stats', label: '统计' },
 ] as const;
 
 export default function App() {
-  const { loadAll, shelves, books, highlight, pickLayer, setTab, tab, loading, error } = useStore();
+  const {
+    loadAll, shelves, books, types, highlight, pickLayer, setTab, tab, loading, error,
+    placement, placeShelf, moveShelfTo, rotatePlacement, exitPlacement,
+  } = useStore();
   const [webgl] = useState(detectWebGL);
 
   useEffect(() => {
     loadAll();
   }, [loadAll]);
 
+  // 摆放模式的键盘操作：R 旋转幽灵朝向，Esc 退出
+  useEffect(() => {
+    if (placement.typeId == null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.target as HTMLElement)?.tagName === 'INPUT' || (e.target as HTMLElement)?.tagName === 'TEXTAREA') return;
+      if (e.key === 'r' || e.key === 'R') rotatePlacement();
+      if (e.key === 'Escape') exitPlacement();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [placement.typeId, rotatePlacement, exitPlacement]);
+
   // 在 3D 里点了某层，自动切到「检索」页看该层藏书
   const handlePickLayer = (p: PickedLayer) => {
     pickLayer(p);
     setTab('search');
   };
+
+  const activeType = types.find((t) => t.id === placement.typeId) ?? null;
 
   return (
     <div className="app">
@@ -55,6 +72,15 @@ export default function App() {
               shelves={shelves}
               books={books}
               highlight={highlight}
+              placement={{
+                type: activeType,
+                rotation: placement.rotation,
+                excludeShelfId: placement.mode === 'move' ? placement.shelfId : null,
+                onPlace: (p) => {
+                  if (placement.mode === 'move') return moveShelfTo(p);
+                  if (placement.typeId != null) return placeShelf({ ...p, typeId: placement.typeId });
+                },
+              }}
               onPickLayer={handlePickLayer}
             />
           </Canvas>
@@ -111,7 +137,7 @@ export default function App() {
             <ShelfTypeManager />
           </>
         )}
-        {tab === 'layout' && <LayoutGrid />}
+        {tab === 'layout' && <PlacementPanel />}
         {tab === 'stats' && <StatsPanel />}
       </aside>
     </div>

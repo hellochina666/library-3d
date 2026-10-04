@@ -19,7 +19,7 @@ export class BooksService {
    * 注意：SQLite 下 contains 区分大小写（中文不受影响）。
    * 若切到 PostgreSQL，可加 mode: 'insensitive' 实现英文忽略大小写。
    */
-  async search(q?: string, layerId?: number) {
+  async search(q?: string, layerId?: number, libraryId?: number) {
     const where: any = {};
     if (q) {
       where.OR = [
@@ -29,6 +29,7 @@ export class BooksService {
       ];
     }
     if (layerId) where.layerId = Number(layerId);
+    if (libraryId) where.shelf = { libraryId: Number(libraryId) };
 
     const books = await this.prisma.book.findMany({
       where,

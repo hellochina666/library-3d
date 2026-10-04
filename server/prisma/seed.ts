@@ -48,6 +48,13 @@ const BOOKS = [
 async function main() {
   console.log('开始写入种子数据...');
 
+  // 0) 默认图书馆：种子布局整体落在「默认图书馆」
+  const library = await prisma.library.upsert({
+    where: { name: '默认图书馆' },
+    update: {},
+    create: { name: '默认图书馆' },
+  });
+
   // 1) 型号
   const typeMap = new Map<string, number>();
   for (const t of TYPES) {
@@ -66,9 +73,9 @@ async function main() {
     const type = await prisma.shelfType.findUnique({ where: { id: typeId } });
 
     const shelf = await prisma.shelf.upsert({
-      where: { code: s.code },
+      where: { libraryId_code: { libraryId: library.id, code: s.code } },
       update: { typeId, posX: s.posX, posZ: s.posZ, rotation: s.rotation, zone: s.zone },
-      create: { code: s.code, typeId, posX: s.posX, posZ: s.posZ, rotation: s.rotation, zone: s.zone },
+      create: { code: s.code, libraryId: library.id, typeId, posX: s.posX, posZ: s.posZ, rotation: s.rotation, zone: s.zone },
     });
 
     const layerIds = new Map<number, number>();

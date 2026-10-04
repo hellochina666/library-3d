@@ -1,3 +1,9 @@
+export interface Library {
+  id: number;
+  name: string;
+  _count?: { shelves: number };
+}
+
 export interface ShelfType {
   id: number;
   name: string;
@@ -19,6 +25,7 @@ export interface Layer {
 export interface Shelf {
   id: number;
   code: string;
+  libraryId: number;
   typeId: number;
   posX: number;
   posZ: number;

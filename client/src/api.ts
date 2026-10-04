@@ -1,4 +1,4 @@
-import type { BookHit, Shelf, ShelfType } from './types';
+import type { BookHit, Library, Shelf, ShelfType } from './types';
 
 // 开发环境走 Vite 代理 /api -> http://localhost:3000；
 // 生产环境（单端口，由 NestJS 同时提供静态页与 API）下 VITE_API_BASE 为空，直接请求同源。
@@ -17,9 +17,18 @@ async function json<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  // ---- 图书馆（多馆切换） ----
+  libraries: () => json<Library[]>('/libraries'),
+  createLibrary: (name: string) =>
+    json<Library>('/libraries', { method: 'POST', body: JSON.stringify({ name }) }),
+  renameLibrary: (id: number, name: string) =>
+    json<Library>(`/libraries/${id}`, { method: 'PUT', body: JSON.stringify({ name }) }),
+  deleteLibrary: (id: number) => json<Library>(`/libraries/${id}`, { method: 'DELETE' }),
+
   // ---- 布局 ----
-  /** 书架布局树（3D 渲染的唯一数据源） */
-  shelves: () => json<Shelf[]>('/shelves'),
+  /** 书架布局树（3D 渲染的唯一数据源），按馆过滤 */
+  shelves: (libraryId?: number) =>
+    json<Shelf[]>(`/shelves${libraryId ? `?libraryId=${libraryId}` : ''}`),
   types: () => json<ShelfType[]>('/shelves/types'),
   createType: (body: Partial<ShelfType>) =>
     json<ShelfType>('/shelves/types', { method: 'POST', body: JSON.stringify(body) }),
@@ -27,6 +36,7 @@ export const api = {
 
   createShelf: (body: {
     code: string;
+    libraryId: number;
     typeId: number;
     posX: number;
     posZ: number;
@@ -37,26 +47,15 @@ export const api = {
     json<Shelf>(`/shelves/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
   deleteShelf: (id: number) => json<Shelf>(`/shelves/${id}`, { method: 'DELETE' }),
 
-  /** 表格批量生成图书馆布局（三期） */
-  applyLayout: (body: {
-    clear?: boolean;
-    colGap?: number;
-    rowGap?: number;
-    items: { code: string; layerCount: number; row: number; col: number }[];
-  }) =>
-    json<{
-      cleared: { shelves: number; books: number } | null;
-      created: number;
-      grid: { rows: number; cols: number; stepX: number; stepZ: number };
-      typesUsed: { id: number; name: string; layerCount: number }[];
-      shelves: Shelf[];
-    }>('/shelves/layout', { method: 'POST', body: JSON.stringify(body) }),
-
   // ---- 图书 ----
-  /** 全部书籍（带定位，用于在 3D 里摆书） */
-  allBooks: () => json<BookHit[]>('/books'),
+  /** 全部书籍（带定位，用于在 3D 里摆书），按馆过滤 */
+  allBooks: (libraryId?: number) =>
+    json<BookHit[]>(`/books${libraryId ? `?libraryId=${libraryId}` : ''}`),
   /** 搜索：命中后返回 shelfId/layerId，前端据此高亮 */
-  search: (q: string) => json<BookHit[]>(`/books?q=${encodeURIComponent(q)}`),
+  search: (q: string, libraryId?: number) =>
+    json<BookHit[]>(
+      `/books?q=${encodeURIComponent(q)}${libraryId ? `&libraryId=${libraryId}` : ''}`,
+    ),
   booksOfLayer: (layerId: number) => json<BookHit[]>(`/books?layerId=${layerId}`),
   createBook: (body: {
     title: string;

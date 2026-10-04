@@ -34,6 +34,22 @@ export function ShelfMesh({ shelf, books, highlight, onPickLayer }: Props) {
   const frameTint = isShelfHi ? '#f0b050' : '#ffffff';
   const backTint = isShelfHi ? '#d9a040' : '#c8b8a8';
 
+  /** 按点击高度反查所在层：点框体、侧板、背板任意位置都能打开这一层的藏书面板 */
+  const pickByHeight = (y: number) => {
+    const idx = Math.min(
+      layerCount,
+      Math.max(1, Math.floor((y - 2 * PLANK_T) / layerHeight) + 1),
+    );
+    const layer = shelf.layers.find((l) => l.layerIndex === idx) ?? shelf.layers[0];
+    if (!layer) return;
+    onPickLayer({
+      shelfId: shelf.id,
+      shelfCode: shelf.code,
+      layerId: layer.id,
+      layerIndex: layer.layerIndex,
+    });
+  };
+
   // 本架书籍按层分组
   const byLayer = useMemo(() => {
     const m = new Map<number, BookHit[]>();
@@ -47,7 +63,14 @@ export function ShelfMesh({ shelf, books, highlight, onPickLayer }: Props) {
   }, [books, shelf.id]);
 
   return (
-    <group position={[shelf.posX, 0, shelf.posZ]} rotation={[0, (shelf.rotation * Math.PI) / 180, 0]}>
+    <group
+      position={[shelf.posX, 0, shelf.posZ]}
+      rotation={[0, (shelf.rotation * Math.PI) / 180, 0]}
+      onClick={(e) => {
+        e.stopPropagation();
+        pickByHeight(e.point.y);
+      }}
+    >
       {/* 两侧立板 */}
       {[-1, 1].map((s) => (
         <mesh key={s} position={[(s * (width - SIDE_T)) / 2, totalH / 2, 0]} castShadow>
@@ -155,6 +178,12 @@ function LayerGroup({
 
   return (
     <group>
+      {/* 该层的整格拾取体积（不可见）：从正面点任意高度都算命中这一层 */}
+      <mesh position={[0, floorTop + layerHeight / 2, 0]}>
+        <boxGeometry args={[width - 2 * SIDE_T, layerHeight, depth]} />
+        <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+      </mesh>
+
       {/* 层板（点击可反查该层藏书） */}
       <mesh
         ref={plankRef}
