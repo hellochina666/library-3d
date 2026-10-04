@@ -105,12 +105,14 @@ button.link:hover { background: none; text-decoration: underline; }
 
 /* ---------- 3D 场景里的书架标签 ---------- */
 .shelf-tag {
-  background: rgba(20,23,28,.85); border: 1px solid #4a5563;
+  background: rgba(38,28,18,.82); border: 1px solid rgba(214,170,110,.4);
   border-radius: 5px; padding: 3px 8px; text-align: center;
-  color: #e6e8eb; font-size: 12px; white-space: nowrap; user-select: none;
+  color: #ead9c0; font-size: 12px; white-space: nowrap; user-select: none;
+  box-shadow: 0 4px 14px rgba(0,0,0,.45); backdrop-filter: blur(2px);
 }
-.shelf-tag strong { display: block; font-size: 13px; color: #f5b942; }
-.shelf-tag span { font-size: 10px; color: #9aa4b0; }
+.shelf-tag strong { display: block; font-size: 13px; color: #f0c46a; }
+.shelf-tag span { font-size: 10px; color: #b9a68a; }
+.shelf-tag.hi { border-color: #ffd23f; box-shadow: 0 0 18px rgba(255,210,63,.35); }
 
 /* ---------- 侧栏 Tab ---------- */
 .tabs { display: flex; gap: 6px; margin-bottom: 12px; }

@@ -45,7 +45,12 @@ export default function App() {
     <div className="app">
       <div className="canvas-wrap">
         {webgl ? (
-          <Canvas shadows camera={{ position: [3.6, 2.6, 5.6], fov: 50 }} dpr={[1, 2]}>
+          <Canvas
+            shadows
+            camera={{ position: [4.4, 2.3, 6.0], fov: 45 }}
+            dpr={[1, 2]}
+            gl={{ antialias: true, powerPreference: 'high-performance' }}
+          >
             <Scene
               shelves={shelves}
               books={books}
