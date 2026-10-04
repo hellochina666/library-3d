@@ -21,6 +21,8 @@ export interface PlacementMode {
 
 const NO_PLACEMENT: PlacementMode = { mode: 'place', typeId: null, shelfId: null, rotation: 0 };
 
+export type PanelState = 'open' | 'min' | 'hidden';
+
 /** 在本馆已用编号之外，按 A-01、A-02… 顺序生成下一个书架编号 */
 function nextCode(shelves: Shelf[]) {
   const used = new Set(shelves.map((s) => s.code));
@@ -47,8 +49,12 @@ interface State {
 
   highlight: Highlight | null;
   pickedLayer: PickedLayer | null;
+  /** 画布上弹出的书本详情卡（3D 点书或点检索结果都会带出） */
+  pickedBook: BookHit | null;
   /** 当前 Tab：检索 / 管理 / 摆放 / 统计 */
   tab: 'search' | 'manage' | 'layout' | 'stats';
+  /** 控制面板形态：展开 / 仅标签条（窄屏抽屉）/ 完全隐藏 */
+  panel: PanelState;
 
   /** 3D 摆放模式：放新架 / 挪旧架 */
   placement: PlacementMode;
@@ -72,7 +78,9 @@ interface State {
   focusBook: (b: BookHit) => void;
   clearHighlight: () => void;
   pickLayer: (p: PickedLayer | null) => void;
+  pickBook: (b: BookHit | null) => void;
   setTab: (t: State['tab']) => void;
+  setPanel: (p: PanelState) => void;
 
   addBook: (input: {
     title: string;
@@ -117,7 +125,9 @@ export const useStore = create<State>((set, get) => ({
 
   highlight: null,
   pickedLayer: null,
+  pickedBook: null,
   tab: 'search',
+  panel: 'open',
 
   placement: NO_PLACEMENT,
   placementMsg: null,
@@ -146,7 +156,7 @@ export const useStore = create<State>((set, get) => ({
     const { libraryId } = get();
     if (!libraryId) return;
     const [shelves, books] = await Promise.all([api.shelves(libraryId), api.allBooks(libraryId)]);
-    set({ shelves, books, highlight: null, pickedLayer: null, results: null, query: '' });
+    set({ shelves, books, highlight: null, pickedLayer: null, pickedBook: null, results: null, query: '' });
   },
 
   switchLibrary: async (id) => {
@@ -182,8 +192,13 @@ export const useStore = create<State>((set, get) => ({
     }
   },
 
-  enterPlacement: (typeId) =>
-    set({ placement: { mode: 'place', typeId, shelfId: null, rotation: 0 }, placementMsg: null }),
+  enterPlacement: (typeId) => {
+    const t = get().types.find((x) => x.id === typeId);
+    set({
+      placement: { mode: 'place', typeId, shelfId: null, rotation: 0 },
+      placementMsg: `摆放${t ? `「${t.name}」` : ''}：点浅绿地砖落位，R 旋转，右键取消`,
+    });
+  },
 
   enterMoveMode: (shelfId) => {
     const s = get().shelves.find((x) => x.id === shelfId);
@@ -259,13 +274,18 @@ export const useStore = create<State>((set, get) => ({
         layerId: b.layerId,
         layerIndex: b.layerIndex,
       },
+      pickedBook: b,
     }),
 
   clearHighlight: () => set({ highlight: null }),
 
   pickLayer: (p) => set({ pickedLayer: p }),
 
+  pickBook: (b) => set({ pickedBook: b }),
+
   setTab: (t) => set({ tab: t }),
+
+  setPanel: (p) => set({ panel: p }),
 
   addBook: async (input) => {
     await api.createBook(input);

@@ -121,6 +121,25 @@ export function planSlots(
   return { slots, hx, hz };
 }
 
+/**
+ * 可落位区域高亮：把判定为 ok 的候选点画成一块块浅绿地砖。
+ * 尺寸取 CELL 减去边距（不是书架真实 footprint），铺满地面也不互相重叠，
+ * 摆放时一眼能看出「哪些地方放得下」。
+ */
+export function buildPlaceableCells(plan: SlotPlan, y = 0.019) {
+  const pts: number[] = [];
+  const hx = CELL / 2 - 0.05;
+  const hz = CELL / 2 - 0.05;
+  for (const s of plan.slots) {
+    if (!s.ok) continue;
+    pts.push(
+      s.posX - hx, y, s.posZ - hz, s.posX + hx, y, s.posZ - hz, s.posX + hx, y, s.posZ + hz,
+      s.posX - hx, y, s.posZ - hz, s.posX + hx, y, s.posZ + hz, s.posX - hx, y, s.posZ + hz,
+    );
+  }
+  return new Float32Array(pts);
+}
+
 /** 指针位置 → 最近的候选落位点 */
 export function nearestSlot(plan: SlotPlan, x: number, z: number): PlannedSlot | null {
   let best: PlannedSlot | null = null;
