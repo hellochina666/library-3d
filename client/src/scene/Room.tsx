@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import * as THREE from 'three';
-import { artTexture, clothTexture, floorTexture, rugTexture, wallTexture, woodTexture } from './materials';
+import { aoBlobTexture, artTexture, clothTexture, floorBumpTexture, floorTexture, rugTexture, wallTexture, woodTexture } from './materials';
 
 export interface RoomRect {
   minX: number;
@@ -34,6 +34,13 @@ export function Room({ rect }: Props) {
     return t;
   }, [w, d]);
 
+  const floorBump = useMemo(() => {
+    const t = floorBumpTexture().clone();
+    t.needsUpdate = true;
+    t.repeat.set(w / 3.2, d / 3.2);
+    return t;
+  }, [w, d]);
+
   const wall = useMemo(() => {
     const t = wallTexture().clone();
     t.needsUpdate = true;
@@ -56,22 +63,31 @@ export function Room({ rect }: Props) {
 
   return (
     <group>
-      {/* 地板 */}
+      {/* 地板：physical 材质 + 板缝凹凸 + 一层清漆，木纹在侧光下有层次 */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[cx, 0, cz]} receiveShadow raycast={noRaycast}>
         <planeGeometry args={[w, d]} />
-        <meshStandardMaterial map={floor} roughness={0.5} metalness={0.02} />
+        <meshPhysicalMaterial
+          map={floor}
+          bumpMap={floorBump}
+          bumpScale={0.55}
+          roughness={0.52}
+          metalness={0.02}
+          clearcoat={0.3}
+          clearcoatRoughness={0.5}
+          envMapIntensity={0.65}
+        />
       </mesh>
 
       {/* 后墙（-Z 侧）：暖调强调墙，衬托书架与挂画 */}
       <mesh position={[cx, h / 2, rect.minZ]} raycast={noRaycast} receiveShadow>
         <planeGeometry args={[w, h]} />
-        <meshStandardMaterial map={wall} color={'#d9c8ab'} roughness={0.95} />
+        <meshStandardMaterial map={wall} bumpMap={wall} bumpScale={0.12} color={'#d9c8ab'} roughness={0.95} envMapIntensity={0.15} />
       </mesh>
 
       {/* 左墙（-X 侧，开窗）：奶油色，法线朝内，相机转到外侧时自动透明 */}
       <mesh position={[rect.minX, h / 2, cz]} rotation={[0, Math.PI / 2, 0]} receiveShadow raycast={noRaycast}>
         <planeGeometry args={[d, h]} />
-        <meshStandardMaterial map={wall2} color={'#f2ead9'} roughness={0.95} />
+        <meshStandardMaterial map={wall2} bumpMap={wall2} bumpScale={0.12} color={'#f2ead9'} roughness={0.95} envMapIntensity={0.15} />
       </mesh>
 
       {/* 踢脚线：现代简约奶油白 */}
@@ -109,6 +125,7 @@ export function Room({ rect }: Props) {
 
       {/* 阅读长凳：靠窗摆放，木座面 + 黑钢腿 + 奶油坐垫 */}
       <group position={[rect.minX + 0.72, 0, cz + 0.35]} rotation={[0, Math.PI / 2, 0]} raycast={noRaycast}>
+        <AoBlob sx={1.7} sz={0.85} />
         <mesh position={[0, 0.42, 0]} castShadow>
           <boxGeometry args={[1.15, 0.045, 0.38]} />
           <meshStandardMaterial map={woodTexture('warm')} roughness={0.6} />
@@ -127,6 +144,7 @@ export function Room({ rect }: Props) {
 
       {/* 边几 + 台灯 + 一摞书：长凳旁，暖光点光源 */}
       <group position={[rect.minX + 0.8, 0, cz + 1.75]} raycast={noRaycast}>
+        <AoBlob sx={0.95} sz={0.95} />
         <mesh position={[0, 0.46, 0]} castShadow>
           <cylinderGeometry args={[0.3, 0.3, 0.03, 24]} />
           <meshStandardMaterial map={woodTexture('dark')} roughness={0.5} />
@@ -147,6 +165,7 @@ export function Room({ rect }: Props) {
 
       {/* 落地灯：开放侧角落，三脚架 + 亚麻灯罩 */}
       <group position={[rect.maxX - 1.05, 0, rect.maxZ - 1.05]} raycast={noRaycast}>
+        <AoBlob sx={0.85} sz={0.85} opacity={0.6} />
         {[0, 1, 2].map((i) => {
           const a = (i / 3) * Math.PI * 2;
           return (
@@ -171,6 +190,16 @@ export function Room({ rect }: Props) {
       <PottedPlant position={[rect.minX + 0.75, 0, rect.minZ + 0.75]} scale={1.5} raycast={noRaycast} />
       <PottedPlant position={[rect.minX + 0.12, 0.77, cz - 0.6]} scale={0.42} raycast={noRaycast} />
     </group>
+  );
+}
+
+/** 家具脚下的接触阴影（假 AO）：径向暗晕贴片 */
+function AoBlob({ sx, sz, opacity = 0.75 }: { sx: number; sz: number; opacity?: number }) {
+  return (
+    <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.013, 0]} renderOrder={1} raycast={() => null}>
+      <planeGeometry args={[sx, sz]} />
+      <meshBasicMaterial map={aoBlobTexture()} transparent opacity={opacity} depthWrite={false} />
+    </mesh>
   );
 }
 
@@ -256,7 +285,7 @@ function Sconce({ position, rotation, raycast }: DecorProps) {
         <sphereGeometry args={[0.038, 14, 10]} />
         <meshStandardMaterial color={'#000'} emissive={'#ffd9a4'} emissiveIntensity={3.2} toneMapped={false} />
       </mesh>
-      <pointLight position={[0, 0.12, 0.22]} color={'#ffd2a0'} intensity={2.1} distance={4.2} decay={2} />
+      <pointLight position={[0, 0.12, 0.22]} color={'#ffd2a0'} intensity={2.4} distance={5} decay={2} />
     </group>
   );
 }
@@ -301,7 +330,7 @@ function TableLamp({ raycast }: { raycast: () => null }) {
         <cylinderGeometry args={[0.095, 0.125, 0.15, 20, 1, true]} />
         <meshStandardMaterial color={'#f2e6cc'} emissive={'#ffd9a4'} emissiveIntensity={0.85} roughness={0.9} side={THREE.DoubleSide} />
       </mesh>
-      <pointLight position={[0, 0.24, 0]} color={'#ffd2a0'} intensity={2.6} distance={4.5} decay={2} />
+      <pointLight position={[0, 0.24, 0]} color={'#ffd2a0'} intensity={3} distance={4.8} decay={2} />
     </group>
   );
 }

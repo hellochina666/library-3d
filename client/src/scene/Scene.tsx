@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { useFrame, type ThreeEvent } from '@react-three/fiber';
-import { Environment, Lightformer, OrbitControls } from '@react-three/drei';
-import { Bloom, EffectComposer, Noise, Outline, Vignette } from '@react-three/postprocessing';
+import { Environment, Lightformer, OrbitControls, Sparkles } from '@react-three/drei';
+import { Bloom, BrightnessContrast, EffectComposer, HueSaturation, N8AO, Noise, Outline, ToneMapping, Vignette } from '@react-three/postprocessing';
+import { ToneMappingMode } from 'postprocessing';
 import { ShelfMesh } from './ShelfMesh';
 import { Room, type RoomRect } from './Room';
 import { getLayerMesh, subscribeRegistry } from './registry';
@@ -163,9 +164,9 @@ export function Scene({ shelves, books, highlight, placement, onPickLayer }: Pro
         castShadow
         color={'#ffdcae'}
         intensity={1.9}
-        shadow-mapSize={[2048, 2048]}
-        shadow-bias={-0.0004}
-        shadow-normalBias={0.02}
+        shadow-mapSize={[4096, 4096]}
+        shadow-bias={-0.00025}
+        shadow-normalBias={0.03}
         shadow-camera-left={-span / 2 - 2}
         shadow-camera-right={span / 2 + 2}
         shadow-camera-top={span / 2 + 2}
@@ -178,6 +179,17 @@ export function Scene({ shelves, books, highlight, placement, onPickLayer }: Pro
 
       {/* 室内硬装：地板/墙/窗/壁灯/挂画/台灯（位置/朝向不影响数据语义） */}
       <Room rect={rect} />
+
+      {/* 阳光里的浮尘：只在窗侧光路上，肉眼几乎不觉但空气感立刻不同 */}
+      <Sparkles
+        count={110}
+        scale={[Math.min(4.5, span * 0.45), 2.2, Math.max(rect.maxZ - rect.minZ, 2) * 0.7]}
+        position={[rect.minX + 1.6, 1.25, cz]}
+        size={1.6}
+        speed={0.16}
+        opacity={0.25}
+        color={'#ffe9c0'}
+      />
 
       {/* 环境反射：暖色天光 + 窗侧高光，让木头和金属有真实镜面过渡 */}
       <Environment resolution={128} frames={1}>
@@ -223,8 +235,11 @@ export function Scene({ shelves, books, highlight, placement, onPickLayer }: Pro
         placementActive={placement?.type != null}
       />
 
-      {/* 常驻后期管线：命中层描边 + 柔光 Bloom + 轻暗角（明亮温馨的通透感） */}
+      {/* 常驻后期管线：N8AO 接触遮蔽 → 命中层描边 → HDR Bloom → ACES 色调映射 →
+          轻微调色 → 暗角与胶片颗粒。EffectComposer 挂载期间渲染器 toneMapping 被关掉，
+          所以必须显式补一个 ToneMapping，否则高光硬裁剪、画面干瘪。 */}
       <EffectComposer multisampling={4}>
+        <N8AO halfRes quality="performance" aoRadius={0.5} distanceFalloff={0.55} intensity={1.9} />
         {selection.length > 0 && (
           <Outline
             selection={selection}
@@ -233,9 +248,12 @@ export function Scene({ shelves, books, highlight, placement, onPickLayer }: Pro
             edgeStrength={12}
           />
         )}
-        <Bloom mipmapBlur intensity={0.2} luminanceThreshold={0.95} luminanceSmoothing={0.2} />
-        <Vignette offset={0.14} darkness={0.5} />
-        <Noise premultiply opacity={0.04} />
+        <Bloom mipmapBlur intensity={0.3} luminanceThreshold={0.92} luminanceSmoothing={0.24} />
+        <ToneMapping mode={ToneMappingMode.ACES_FILMIC} />
+        <HueSaturation saturation={0.07} />
+        <BrightnessContrast brightness={0} contrast={0.07} />
+        <Vignette offset={0.14} darkness={0.48} />
+        <Noise premultiply opacity={0.032} />
       </EffectComposer>
     </>
   );

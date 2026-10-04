@@ -7,13 +7,14 @@ import * as THREE from 'three';
 
 const cache = new Map<string, THREE.CanvasTexture>();
 
-function cached(key: string, build: () => HTMLCanvasElement, repeat: [number, number]) {
+/** srgb=false 用于凹凸等数据贴图：不走 sRGB 解码，明暗信息才线性正确 */
+function cached(key: string, build: () => HTMLCanvasElement, repeat: [number, number], srgb = true) {
   const hit = cache.get(key);
   if (hit) return hit;
   const tex = new THREE.CanvasTexture(build());
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
   tex.repeat.set(repeat[0], repeat[1]);
-  tex.colorSpace = THREE.SRGBColorSpace;
+  if (srgb) tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = 8;
   cache.set(key, tex);
   return tex;
@@ -92,6 +93,19 @@ export function woodTexture(kind: 'warm' | 'dark') {
   );
 }
 
+/** 把彩色画布拉成灰度凹凸图：暗纹下陷、亮部微凸，配合 bumpMap 用 */
+function toBump(src: HTMLCanvasElement, contrast = 1.5, brightness = -0.08) {
+  const c = canvas(src.width, src.height);
+  c.filter = `grayscale(1) contrast(${contrast}) brightness(${1 + brightness})`;
+  c.drawImage(src, 0, 0);
+  return c.canvas;
+}
+
+/** 木纹对应的凹凸图（同源灰度化，纹路位置完全对齐） */
+export function woodBumpTexture(kind: 'warm' | 'dark') {
+  return cached(`woodbump-${kind}`, () => toBump(woodTexture(kind).image as HTMLCanvasElement), [1.5, 1.5], false);
+}
+
 /** 地板：浅暖橡木宽板，逐板色差 + 板缝 + 沿板纹理（现代简约） */
 export function floorTexture() {
   return cached('floor', () => {
@@ -127,6 +141,11 @@ export function floorTexture() {
   }, [3, 3]);
 }
 
+/** 地板凹凸图：板缝与木纹下陷，侧光下有真实起伏 */
+export function floorBumpTexture() {
+  return cached('floorbump', () => toBump(floorTexture().image as HTMLCanvasElement, 1.7, -0.1), [3, 3], false);
+}
+
 /** 墙面：奶油白乳胶漆，细腻批刮痕迹（温馨现代） */
 export function wallTexture() {
   return cached('wall', () => {
@@ -160,6 +179,11 @@ export function clothTexture() {
     }
     return ctx.canvas;
   }, [1, 1]);
+}
+
+/** 布面织纹的凹凸图：书封近看有织物起伏 */
+export function clothBumpTexture() {
+  return cached('clothbump', () => toBump(clothTexture().image as HTMLCanvasElement, 1.8), [1, 1], false);
 }
 
 /** 书页侧面：米黄纸张的细密页线 */
@@ -334,6 +358,24 @@ export function signTexture(code: string, sub: string, hi: boolean) {
     ctx.font = '500 30px "Segoe UI", system-ui, sans-serif';
     ctx.fillStyle = hi ? '#7a4e00' : '#8a7458';
     ctx.fillText(sub, W / 2, H * 0.76);
+    return ctx.canvas;
+  }, [1, 1]);
+}
+
+/**
+ * 接触阴影（假 AO）：中心深、边缘渐隐的径向渐变。
+ * 垫在书架/家具脚下，解决"贴地不牢"的悬浮感 —— 成本为零、永远对齐。
+ */
+export function aoBlobTexture() {
+  return cached('ao-blob', () => {
+    const size = 256;
+    const ctx = canvas(size);
+    const g = ctx.createRadialGradient(size / 2, size / 2, size * 0.1, size / 2, size / 2, size * 0.5);
+    g.addColorStop(0, 'rgba(16,10,5,0.66)');
+    g.addColorStop(0.55, 'rgba(16,10,5,0.32)');
+    g.addColorStop(1, 'rgba(16,10,5,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, size, size);
     return ctx.canvas;
   }, [1, 1]);
 }

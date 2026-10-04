@@ -74,7 +74,7 @@ export default function App() {
       <div className="canvas-wrap">
         {webgl ? (
           <Canvas
-            shadows
+            shadows="soft"
             camera={{ position: [4.4, 2.3, 6.0], fov: 45 }}
             dpr={[1, 2]}
             gl={{ antialias: true, powerPreference: 'high-performance' }}
