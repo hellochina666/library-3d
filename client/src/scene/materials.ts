@@ -19,9 +19,10 @@ function cached(key: string, build: () => HTMLCanvasElement, repeat: [number, nu
   return tex;
 }
 
-function canvas(size: number) {
+function canvas(size: number, height?: number) {
   const c = document.createElement('canvas');
-  c.width = c.height = size;
+  c.width = size;
+  c.height = height ?? size;
   return c.getContext('2d')!;
 }
 
@@ -78,12 +79,12 @@ function paintWood(size: number, base: string, streak: string, knot: string, see
   return ctx.canvas;
 }
 
-/** 书架用木料：warm=暖橡木 / dark=胡桃木 */
+/** 书架用木料：warm=浅暖橡木（现代简约主材）/ dark=深胡桃木（点缀） */
 export function woodTexture(kind: 'warm' | 'dark') {
   const cfg =
     kind === 'warm'
-      ? { base: '#a97a4e', streak: '#7c5230', knot: 'rgba(60,38,18,0.9)', seed: 7 }
-      : { base: '#5d3f2a', streak: '#3c2717', knot: 'rgba(24,14,6,0.9)', seed: 21 };
+      ? { base: '#c69a63', streak: '#a1784a', knot: 'rgba(120,84,46,0.75)', seed: 7 }
+      : { base: '#6d4f33', streak: '#4c3420', knot: 'rgba(34,20,10,0.85)', seed: 21 };
   return cached(
     `wood-${kind}`,
     () => paintWood(512, cfg.base, cfg.streak, cfg.knot, cfg.seed),
@@ -91,24 +92,24 @@ export function woodTexture(kind: 'warm' | 'dark') {
   );
 }
 
-/** 地板：横向长条板，逐板色差 + 板缝 + 沿板纹理 */
+/** 地板：浅暖橡木宽板，逐板色差 + 板缝 + 沿板纹理（现代简约） */
 export function floorTexture() {
   return cached('floor', () => {
     const size = 1024;
     const ctx = canvas(size);
     const rnd = seededRandom(99);
-    const rows = 8;
+    const rows = 7;
     const rowH = size / rows;
-    ctx.fillStyle = '#6b4a2f';
+    ctx.fillStyle = '#c8a578';
     ctx.fillRect(0, 0, size, size);
     for (let r = 0; r < rows; r++) {
-      const shade = 0.78 + rnd() * 0.3;
-      ctx.fillStyle = `rgb(${Math.round(122 * shade)},${Math.round(84 * shade)},${Math.round(52 * shade)})`;
+      const shade = 0.86 + rnd() * 0.22;
+      ctx.fillStyle = `rgb(${Math.round(206 * shade)},${Math.round(168 * shade)},${Math.round(122 * shade)})`;
       ctx.fillRect(0, r * rowH, size, rowH);
       // 每块板内部的细纹
       for (let i = 0; i < 90; i++) {
         const y = r * rowH + rnd() * rowH;
-        ctx.strokeStyle = rnd() > 0.5 ? 'rgba(46,28,14,0.18)' : 'rgba(190,140,90,0.10)';
+        ctx.strokeStyle = rnd() > 0.5 ? 'rgba(122,86,48,0.16)' : 'rgba(255,238,210,0.14)';
         ctx.lineWidth = 0.6 + rnd() * 1.4;
         ctx.beginPath();
         ctx.moveTo(0, y);
@@ -116,7 +117,7 @@ export function floorTexture() {
         ctx.stroke();
       }
       // 板缝
-      ctx.fillStyle = 'rgba(20,10,4,0.55)';
+      ctx.fillStyle = 'rgba(88,58,30,0.4)';
       ctx.fillRect(0, r * rowH, size, 2);
       // 纵向拼缝（错开）
       const seam = ((r * 0.37 + rnd() * 0.2) % 1) * size;
@@ -126,18 +127,18 @@ export function floorTexture() {
   }, [3, 3]);
 }
 
-/** 墙面：暖色乳胶漆，细腻批刮痕迹 */
+/** 墙面：奶油白乳胶漆，细腻批刮痕迹（温馨现代） */
 export function wallTexture() {
   return cached('wall', () => {
     const size = 512;
     const ctx = canvas(size);
     const rnd = seededRandom(45);
-    ctx.fillStyle = '#c9b18f';
+    ctx.fillStyle = '#efe4d2';
     ctx.fillRect(0, 0, size, size);
     for (let i = 0; i < 2600; i++) {
       const x = rnd() * size;
       const y = rnd() * size;
-      ctx.fillStyle = rnd() > 0.5 ? 'rgba(255,240,215,0.05)' : 'rgba(96,72,48,0.05)';
+      ctx.fillStyle = rnd() > 0.5 ? 'rgba(255,248,235,0.06)' : 'rgba(160,134,102,0.05)';
       ctx.fillRect(x, y, 1 + rnd() * 3, 1 + rnd() * 3);
     }
     return ctx.canvas;
@@ -181,38 +182,158 @@ export function paperTexture() {
   }, [1, 1]);
 }
 
-/** 地毯：深酒红 + 边框与菱形纹 */
+/** 地毯：奶油底 + 陶土色几何边框（现代简约） */
 export function rugTexture() {
   return cached('rug', () => {
     const size = 512;
     const ctx = canvas(size);
-    ctx.fillStyle = '#5c2b25';
+    ctx.fillStyle = '#e5d7c0';
     ctx.fillRect(0, 0, size, size);
     const rnd = seededRandom(77);
     for (let i = 0; i < 9000; i++) {
-      ctx.fillStyle = rnd() > 0.5 ? 'rgba(255,220,190,0.03)' : 'rgba(20,8,6,0.05)';
+      ctx.fillStyle = rnd() > 0.5 ? 'rgba(255,246,230,0.05)' : 'rgba(120,92,60,0.04)';
       ctx.fillRect(rnd() * size, rnd() * size, 2, 2);
     }
-    ctx.strokeStyle = '#c8a15c';
-    ctx.lineWidth = 8;
-    ctx.strokeRect(26, 26, size - 52, size - 52);
-    ctx.lineWidth = 2;
-    ctx.strokeRect(44, 44, size - 88, size - 88);
-    for (let i = 0; i < 8; i++) {
-      for (let j = 0; j < 8; j++) {
-        const cx = 90 + i * 47;
-        const cy = 90 + j * 47;
-        ctx.strokeStyle = 'rgba(200,161,92,0.35)';
-        ctx.lineWidth = 2;
+    // 外圈陶土色宽边 + 内细线
+    ctx.strokeStyle = '#c4795a';
+    ctx.lineWidth = 14;
+    ctx.strokeRect(20, 20, size - 40, size - 40);
+    ctx.strokeStyle = 'rgba(196,121,90,0.55)';
+    ctx.lineWidth = 3;
+    ctx.strokeRect(48, 48, size - 96, size - 96);
+    // 中央几条断续的沙色横线，低调不抢书架
+    for (let i = 0; i < 4; i++) {
+      const y = 150 + i * 70;
+      ctx.strokeStyle = 'rgba(178,142,100,0.4)';
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.moveTo(120, y);
+      ctx.lineTo(size - 120, y);
+      ctx.stroke();
+    }
+    return ctx.canvas;
+  }, [1, 1]);
+}
+
+/**
+ * 挂画画面：暖色 boho-minimal 抽象画（米白底 + 陶土/赭石/鼠尾草色块与线条）。
+ * variant 0..2 三种构图，配合画框与留白卡纸使用。
+ */
+export function artTexture(variant: number) {
+  return cached(`art-${variant}`, () => {
+    const W = 512;
+    const H = 640;
+    const ctx = canvas(W, H);
+    const rnd = seededRandom(300 + variant * 17);
+    ctx.fillStyle = '#f6efe2';
+    ctx.fillRect(0, 0, W, H);
+    // 纸张细噪点
+    for (let i = 0; i < 2400; i++) {
+      ctx.fillStyle = rnd() > 0.5 ? 'rgba(210,190,160,0.05)' : 'rgba(255,255,255,0.05)';
+      ctx.fillRect(rnd() * W, rnd() * H, 1.5, 1.5);
+    }
+
+    if (variant === 0) {
+      // 升起的太阳：陶土色大圆弧 + 赭石细线地平
+      const g = ctx.createLinearGradient(0, H * 0.2, 0, H * 0.72);
+      g.addColorStop(0, '#d98d63');
+      g.addColorStop(1, '#c96f4a');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(W * 0.5, H * 0.46, W * 0.26, Math.PI, 0);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = '#3e342a';
+      ctx.lineWidth = 5;
+      ctx.beginPath();
+      ctx.moveTo(W * 0.14, H * 0.46);
+      ctx.lineTo(W * 0.86, H * 0.46);
+      ctx.stroke();
+      ctx.fillStyle = '#e8d9bd';
+      ctx.beginPath();
+      ctx.arc(W * 0.5, H * 0.46, W * 0.26, 0, Math.PI);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = '#a5764f';
+      ctx.lineWidth = 3;
+      for (let i = 0; i < 5; i++) {
+        const y = H * 0.52 + i * 26;
         ctx.beginPath();
-        ctx.moveTo(cx, cy - 10);
-        ctx.lineTo(cx + 10, cy);
-        ctx.lineTo(cx, cy + 10);
-        ctx.lineTo(cx - 10, cy);
-        ctx.closePath();
+        ctx.moveTo(W * 0.2, y);
+        ctx.lineTo(W * 0.8 - i * 18, y);
         ctx.stroke();
       }
+    } else if (variant === 1) {
+      // 三座柔和山丘：鼠尾草绿 / 橄榄 / 沙色
+      const hills: [string, number, number][] = [
+        ['#a9b39a', 0.62, 0.34],
+        ['#8a9b7c', 0.72, 0.26],
+        ['#d9b98a', 0.82, 0.2],
+      ];
+      for (const [col, base, amp] of hills) {
+        ctx.fillStyle = col;
+        ctx.beginPath();
+        ctx.moveTo(-20, H);
+        ctx.lineTo(-20, H * base);
+        ctx.quadraticCurveTo(W * 0.5, H * (base - amp), W + 20, H * base);
+        ctx.lineTo(W + 20, H);
+        ctx.closePath();
+        ctx.fill();
+      }
+      ctx.fillStyle = '#3e342a';
+      ctx.beginPath();
+      ctx.arc(W * 0.72, H * 0.2, W * 0.055, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      // 干枝与陶罐：极简静物线条
+      ctx.strokeStyle = '#8a5a3b';
+      ctx.lineWidth = 10;
+      ctx.beginPath();
+      ctx.moveTo(W * 0.5, H * 0.78);
+      ctx.quadraticCurveTo(W * 0.46, H * 0.5, W * 0.56, H * 0.24);
+      ctx.stroke();
+      ctx.lineWidth = 6;
+      for (const [dx, dy] of [[-0.1, -0.14], [0.07, -0.1], [-0.05, -0.08]] as const) {
+        ctx.beginPath();
+        ctx.moveTo(W * 0.5, H * 0.55);
+        ctx.quadraticCurveTo(W * (0.5 + dx), H * (0.42 + dy), W * (0.5 + dx * 1.9), H * (0.36 + dy * 1.4));
+        ctx.stroke();
+      }
+      ctx.fillStyle = '#c4795a';
+      ctx.beginPath();
+      ctx.ellipse(W * 0.5, H * 0.82, W * 0.11, H * 0.045, 0, 0, Math.PI);
+      ctx.fill();
+      ctx.fillRect(W * 0.39, H * 0.72, W * 0.22, H * 0.1);
+      ctx.fillStyle = '#f6efe2';
+      ctx.fillRect(W * 0.39, H * 0.715, W * 0.22, 8);
     }
+    return ctx.canvas;
+  }, [1, 1]);
+}
+
+/**
+ * 书架顶三角形导视牌的牌面：奶油亚克力底 + 深棕书号，命中高亮时换琥珀底。
+ * 正反两块斜面各贴一张，从两侧看文字都是正的。
+ */
+export function signTexture(code: string, sub: string, hi: boolean) {
+  return cached(`sign-${code}|${sub}|${hi ? 1 : 0}`, () => {
+    const W = 512;
+    const H = 192;
+    const ctx = canvas(W, H);
+    ctx.fillStyle = hi ? '#ffd166' : '#faf3e6';
+    ctx.fillRect(0, 0, W, H);
+    // 边框与角标
+    ctx.strokeStyle = hi ? '#8a5a00' : '#b9986a';
+    ctx.lineWidth = 6;
+    ctx.strokeRect(10, 10, W - 20, H - 20);
+    ctx.fillStyle = hi ? '#5c3a00' : '#4a3b2c';
+    ctx.font = '700 88px "Segoe UI", system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(code, W / 2, H * 0.42);
+    ctx.font = '500 30px "Segoe UI", system-ui, sans-serif';
+    ctx.fillStyle = hi ? '#7a4e00' : '#8a7458';
+    ctx.fillText(sub, W / 2, H * 0.76);
     return ctx.canvas;
   }, [1, 1]);
 }

@@ -190,7 +190,7 @@ export const useStore = create<State>((set, get) => ({
     if (!s) return;
     set({
       placement: { mode: 'move', typeId: s.typeId, shelfId, rotation: s.rotation },
-      placementMsg: `移动 ${s.code}：在绿色空格点击新位置`,
+      placementMsg: `移动 ${s.code}：拖到新位置松开左键落位（或点击绿色方格），右键取消`,
     });
   },
 

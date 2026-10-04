@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
-import { Html } from '@react-three/drei';
+import type { ThreeEvent } from '@react-three/fiber';
 import type { BookHit, Highlight, Shelf } from '../types';
 import { registerLayerMesh } from './registry';
-import { clothTexture, coverColor, paperTexture, seededRandom, woodTexture } from './materials';
+import { clothTexture, coverColor, paperTexture, seededRandom, signTexture, woodTexture } from './materials';
 
 /** 板厚与立板厚度（米） */
 const PLANK_T = 0.03;
@@ -14,14 +14,18 @@ interface Props {
   books: BookHit[];
   highlight: Highlight | null;
   onPickLayer: (p: { shelfId: number; shelfCode: string; layerId: number; layerIndex: number }) => void;
+  /** 长按抓取期间的点击抑制锁：抓起→松开的同一次点击不应打开层面板 */
+  lockRef?: React.RefObject<boolean>;
+  /** 在书架上按下左键（供长按抓取检测） */
+  onShelfDown?: (shelfId: number, e: ThreeEvent<PointerEvent>) => void;
 }
 
 /**
  * 一个书架 = 一个 Group，位置/朝向直接来自数据库的 posX/posZ/rotation。
  * 层数由 shelf.type.layerCount 决定；外形程序化拼装：
- * 橡木侧板与层板、胡桃木背板、顶部帽线、金属书挡杆，书籍带布面封面与书页块。
+ * 浅橡木侧板与层板、奶油漆背板、顶部帽线，书籍带布面封面与书页块。
  */
-export function ShelfMesh({ shelf, books, highlight, onPickLayer }: Props) {
+export function ShelfMesh({ shelf, books, highlight, onPickLayer, lockRef, onShelfDown }: Props) {
   const { width, depth, layerCount, layerHeight, slotsPerLayer } = shelf.type;
 
   const totalH = layerCount * layerHeight + 3 * PLANK_T;
@@ -30,9 +34,7 @@ export function ShelfMesh({ shelf, books, highlight, onPickLayer }: Props) {
 
   const isShelfHi = highlight?.shelfId === shelf.id;
   const oak = woodTexture('warm');
-  const walnut = woodTexture('dark');
   const frameTint = isShelfHi ? '#f0b050' : '#ffffff';
-  const backTint = isShelfHi ? '#d9a040' : '#c8b8a8';
 
   /** 按点击高度反查所在层：点框体、侧板、背板任意位置都能打开这一层的藏书面板 */
   const pickByHeight = (y: number) => {
@@ -66,7 +68,10 @@ export function ShelfMesh({ shelf, books, highlight, onPickLayer }: Props) {
     <group
       position={[shelf.posX, 0, shelf.posZ]}
       rotation={[0, (shelf.rotation * Math.PI) / 180, 0]}
+      onPointerDown={(e) => onShelfDown?.(shelf.id, e)}
       onClick={(e) => {
+        // 抓取松手的那一下不算选层；拖完视角（delta 大）也不算
+        if (lockRef?.current || e.delta > 6) return;
         e.stopPropagation();
         pickByHeight(e.point.y);
       }}
@@ -79,10 +84,10 @@ export function ShelfMesh({ shelf, books, highlight, onPickLayer }: Props) {
         </mesh>
       ))}
 
-      {/* 背板：薄胡桃木夹板 */}
+      {/* 背板：奶油漆面板（现代简约），命中时整架泛暖 */}
       <mesh position={[0, totalH / 2, -depth / 2 + 0.011]} receiveShadow>
         <boxGeometry args={[width - 2 * SIDE_T, totalH, 0.018]} />
-        <meshStandardMaterial map={walnut} color={backTint} roughness={0.8} />
+        <meshStandardMaterial color={isShelfHi ? '#f3d9a4' : '#ddd0b6'} roughness={0.9} />
       </mesh>
 
       {/* 顶板 + 帽线、底座 */}
@@ -92,7 +97,7 @@ export function ShelfMesh({ shelf, books, highlight, onPickLayer }: Props) {
       </mesh>
       <mesh position={[0, totalH + 0.021, 0.006]} castShadow>
         <boxGeometry args={[width + 0.06, 0.038, depth + 0.04]} />
-        <meshStandardMaterial map={walnut} color={frameTint} roughness={0.5} />
+        <meshStandardMaterial map={oak} color={frameTint} roughness={0.5} />
       </mesh>
       <mesh position={[0, PLANK_T / 2, 0]} receiveShadow>
         <boxGeometry args={[width, PLANK_T, depth]} />
@@ -125,13 +130,99 @@ export function ShelfMesh({ shelf, books, highlight, onPickLayer }: Props) {
         />
       ))}
 
-      {/* 书架编号标签 */}
-      <Html position={[0, totalH + 0.3, 0]} center distanceFactor={7} zIndexRange={[10, 0]}>
-        <div className={`shelf-tag${isShelfHi ? ' hi' : ''}`}>
-          <strong>{shelf.code}</strong>
-          <span>{layerCount} 层 · {shelf.zone ?? '—'}</span>
-        </div>
-      </Html>
+      {/* 书架编号牌：两面三角形导视立牌，固定在书架顶部，随书架尺寸缩放 */}
+      <ShelfTag
+        code={shelf.code}
+        sub={`${layerCount} 层 · ${shelf.zone ?? '—'}`}
+        width={width}
+        topY={totalH + 0.04}
+        highlighted={isShelfHi}
+      />
+    </group>
+  );
+}
+
+/** 三角导视牌的坡面倾角（度） */
+const TAG_SLOPE = 55;
+
+/**
+ * 书架顶部的三角形导视牌（图书馆 aisle sign）：
+ * 两块斜面板互相依靠成「人字形」，正反两面各贴一张牌面纹理，
+ * 从哪个方向看文字都是正的。整体是世界空间网格 —— 朝向固定在书架上
+ * （不再始终面朝屏幕），参与常规深度测试（不再始终置顶），
+ * 尺寸随书架宽度推导，随场景缩放。
+ */
+function ShelfTag({
+  code,
+  sub,
+  width,
+  topY,
+  highlighted,
+}: {
+  code: string;
+  sub: string;
+  width: number;
+  topY: number;
+  highlighted: boolean;
+}) {
+  const face = useMemo(() => signTexture(code, sub, highlighted), [code, sub, highlighted]);
+
+  // 尺寸从书架宽度推导：牌宽 ≈ 架宽的 6 成，脊高按比例并限幅
+  const signW = Math.min(Math.max(width * 0.62, 0.46), 1.0);
+  const ridgeH = Math.min(Math.max(width * 0.11, 0.08), 0.13);
+  const slope = (TAG_SLOPE * Math.PI) / 180;
+  const baseHalf = ridgeH / Math.tan(slope); // 半个底宽
+  const boardLen = ridgeH / Math.sin(slope); // 斜面板长度
+  const tilt = Math.PI / 2 - slope; // 从竖直位置向后仰的角度
+  const boardColor = highlighted ? '#f7c95e' : '#f4ecdb';
+
+  // 端部三角封板（ShapeGeometry 在 XY 平面，旋转后立在 ZY 平面）
+  const capGeo = useMemo(() => {
+    const s = new THREE.Shape();
+    s.moveTo(-baseHalf, 0);
+    s.lineTo(baseHalf, 0);
+    s.lineTo(0, ridgeH);
+    s.closePath();
+    return new THREE.ShapeGeometry(s);
+  }, [baseHalf, ridgeH]);
+  useEffect(() => () => capGeo.dispose(), [capGeo]);
+
+  return (
+    <group position={[0, topY, 0]}>
+      {/* 底座：深木色窄条，压住两块斜面板的脚 */}
+      <mesh position={[0, 0.008, 0]} castShadow>
+        <boxGeometry args={[signW, 0.016, baseHalf * 2 + 0.02]} />
+        <meshStandardMaterial map={woodTexture('dark')} roughness={0.55} />
+      </mesh>
+
+      {/* 正面斜板：+Z 面贴牌面纹理 */}
+      <mesh position={[0, 0.016 + ridgeH / 2, baseHalf / 2]} rotation={[-tilt, 0, 0]} castShadow>
+        <boxGeometry args={[signW, boardLen, 0.012]} />
+        <meshStandardMaterial attach="material-4" map={face} roughness={0.5} />
+        <meshStandardMaterial attach="material-5" color={boardColor} roughness={0.55} />
+        <meshStandardMaterial attach="material-0" color={boardColor} roughness={0.55} />
+        <meshStandardMaterial attach="material-1" color={boardColor} roughness={0.55} />
+        <meshStandardMaterial attach="material-2" color={boardColor} roughness={0.55} />
+        <meshStandardMaterial attach="material-3" color={boardColor} roughness={0.55} />
+      </mesh>
+
+      {/* 背面斜板：-Z 面贴牌面纹理（从背面看文字同样是正的） */}
+      <mesh position={[0, 0.016 + ridgeH / 2, -baseHalf / 2]} rotation={[tilt, 0, 0]} castShadow>
+        <boxGeometry args={[signW, boardLen, 0.012]} />
+        <meshStandardMaterial attach="material-4" color={boardColor} roughness={0.55} />
+        <meshStandardMaterial attach="material-5" map={face} roughness={0.5} />
+        <meshStandardMaterial attach="material-0" color={boardColor} roughness={0.55} />
+        <meshStandardMaterial attach="material-1" color={boardColor} roughness={0.55} />
+        <meshStandardMaterial attach="material-2" color={boardColor} roughness={0.55} />
+        <meshStandardMaterial attach="material-3" color={boardColor} roughness={0.55} />
+      </mesh>
+
+      {/* 两端三角封板 */}
+      {[-1, 1].map((s) => (
+        <mesh key={s} geometry={capGeo} position={[(s * signW) / 2, 0.016, 0]} rotation={[0, (s * Math.PI) / 2, 0]}>
+          <meshStandardMaterial color={highlighted ? '#eab948' : '#eadfc8'} roughness={0.6} side={THREE.DoubleSide} />
+        </mesh>
+      ))}
     </group>
   );
 }

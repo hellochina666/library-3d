@@ -30,7 +30,7 @@ const TABS = [
 export default function App() {
   const {
     loadAll, shelves, books, types, highlight, pickLayer, setTab, tab, loading, error,
-    placement, placeShelf, moveShelfTo, rotatePlacement, exitPlacement,
+    placement, placeShelf, moveShelfTo, rotatePlacement, exitPlacement, enterMoveMode,
   } = useStore();
   const [webgl] = useState(detectWebGL);
 
@@ -49,6 +49,17 @@ export default function App() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [placement.typeId, rotatePlacement, exitPlacement]);
+
+  // 摆放模式下右键 = 取消（同时禁掉浏览器菜单）
+  useEffect(() => {
+    if (placement.typeId == null) return;
+    const onCtx = (e: MouseEvent) => {
+      e.preventDefault();
+      exitPlacement();
+    };
+    window.addEventListener('contextmenu', onCtx);
+    return () => window.removeEventListener('contextmenu', onCtx);
+  }, [placement.typeId, exitPlacement]);
 
   // 在 3D 里点了某层，自动切到「检索」页看该层藏书
   const handlePickLayer = (p: PickedLayer) => {
@@ -80,6 +91,8 @@ export default function App() {
                   if (placement.mode === 'move') return moveShelfTo(p);
                   if (placement.typeId != null) return placeShelf({ ...p, typeId: placement.typeId });
                 },
+                onMoveEnter: enterMoveMode,
+                onCancel: exitPlacement,
               }}
               onPickLayer={handlePickLayer}
             />

@@ -1,14 +1,20 @@
 import type { ShelfType } from '../types';
 
 /**
- * 客户端摆放规则 —— 必须与 server/src/shelves/placement.ts 保持一致。
- * 这里做即时预览（绿色/红色幽灵），最终落位仍由后端权威校验。
+ * 客户端摆放规则 —— 必须与 server/src/shelves/placement.ts 的间距判定保持一致。
+ * 这里做即时预览（幽灵绿/红、占用格子），最终落位仍由后端权威校验。
+ *
+ * 地面网格：全局按 CELL 等分的**正方形**点阵，平均分布、与书架型号无关；
+ * 候选落位点 = 全局方格点阵 ∪ 以每个已有书架为锚点的随行点阵（保证贴着
+ * 现有一排永远能顺延出可用位置）。
  */
 
 /** 同排相邻书架侧向间隙（米） */
 export const GAP_X = 0.4;
 /** 排与排之间走道宽度（米） */
 export const GAP_Z = 0.9;
+/** 全局地面方格边长（米）：底部网格的基本单元 */
+export const CELL = 0.6;
 /** 与 server/src/shelves/placement.ts 同步的判定容差：正好卡在最小间距上的吸附点两边都算「放得下」 */
 const COLLIDE_TOL = 0.005;
 
@@ -39,7 +45,7 @@ export function conflicts(a: Foot, b: Foot) {
   );
 }
 
-/** 当前型号的吸附步长：侧向 = 宽 + GAP_X，纵向 = 深 + GAP_Z */
+/** 当前型号的随行步长：侧向 = 宽 + GAP_X，纵向 = 深 + GAP_Z */
 export function snapStep(type: Pick<ShelfType, 'width' | 'depth'>, rotation: number) {
   const { hx, hz } = halfExtents({ width: type.width, depth: type.depth, rotation });
   return { stepX: hx * 2 + GAP_X, stepZ: hz * 2 + GAP_Z, hx, hz };
@@ -66,10 +72,11 @@ export interface SlotPlan {
 }
 
 /**
- * 候选落位点集合 = 全局点阵 ∪ 以每个已有书架为锚点的点阵。
- * 只靠全局点阵会出现「地面明明空着却放不下」：老书架的位置不在新点阵上，
- * 于是贴近它们的格子全被判定为冲突。把已摆放的书架也当成锚点，
- * 贴着现有一排永远能顺延出可用位置。
+ * 候选落位点集合：
+ * 1) 全局方格点阵（CELL 等分正方形，均匀铺满房间）；
+ * 2) 以每个已有书架为锚点的随行点阵（按型号真实步长展开）——
+ *    已有书架往往不在全局点阵上，光靠 1) 会出现「地面明明空着却放不下」，
+ *    把它们当锚点，贴着现有一排永远能顺延出可用位置。
  */
 export function planSlots(
   rect: { minX: number; maxX: number; minZ: number; maxZ: number },
@@ -88,11 +95,13 @@ export function planSlots(
     if (!found.has(key)) found.set(key, { posX: x, posZ: z });
   };
 
-  for (let kx = Math.ceil((rect.minX + hx) / stepX); kx <= Math.floor((rect.maxX - hx) / stepX); kx++) {
-    for (let kz = Math.ceil((rect.minZ + hz) / stepZ); kz <= Math.floor((rect.maxZ - hz) / stepZ); kz++) {
-      add(kx * stepX, kz * stepZ);
+  // 1) 全局正方形点阵
+  for (let gx = Math.ceil(rect.minX / CELL); gx <= Math.floor(rect.maxX / CELL); gx++) {
+    for (let gz = Math.ceil(rect.minZ / CELL); gz <= Math.floor(rect.maxZ / CELL); gz++) {
+      add(gx * CELL, gz * CELL);
     }
   }
+  // 2) 锚点随行点阵
   const anchorList: Slot[] = anchors ?? others.map((o) => ({ posX: o.posX, posZ: o.posZ }));
   for (const a of anchorList) {
     for (let i = -reach; i <= reach; i++) {
@@ -126,22 +135,48 @@ export function nearestSlot(plan: SlotPlan, x: number, z: number): PlannedSlot |
   return best;
 }
 
+/** 地面正方形网格线（放置时显示，帮助读格子；y 要高于地毯才能透出来） */
+export function buildGridLines(
+  rect: { minX: number; maxX: number; minZ: number; maxZ: number },
+  y = 0.016,
+) {
+  const pts: number[] = [];
+  for (let x = Math.ceil(rect.minX / CELL) * CELL; x <= rect.maxX; x += CELL) {
+    pts.push(x, y, rect.minZ, x, y, rect.maxZ);
+  }
+  for (let z = Math.ceil(rect.minZ / CELL) * CELL; z <= rect.maxZ; z += CELL) {
+    pts.push(rect.minX, y, z, rect.maxX, y, z);
+  }
+  return new Float32Array(pts);
+}
+
 /**
- * 地面「空格提示」线段：绿 = 此刻真的能放，红 = 被占或间距不足。
- * 提示与实际校验共用同一份判定，不会出现「看着空却放不下」。
+ * 已有书架占用的底部格子： footprint 覆盖到的方格逐格填充。
+ * 一个书架占几个格子一眼可见，也是摆放时的「已占用」高亮。
  */
-export function buildSlotLines(plan: SlotPlan) {
-  const { slots, hx, hz } = plan;
-  const free: number[] = [];
-  const blocked: number[] = [];
-  const Y = 0.008;
-  const pushRect = (buf: number[], cx: number, cz: number) => {
-    const x0 = cx - hx, x1 = cx + hx, z0 = cz - hz, z1 = cz + hz;
-    buf.push(x0, Y, z0, x1, Y, z0);
-    buf.push(x1, Y, z0, x1, Y, z1);
-    buf.push(x1, Y, z1, x0, Y, z1);
-    buf.push(x0, Y, z1, x0, Y, z0);
-  };
-  for (const s of slots) pushRect(s.ok ? free : blocked, s.posX, s.posZ);
-  return { free: new Float32Array(free), blocked: new Float32Array(blocked) };
+export function buildOccupiedCells(others: Foot[], y = 0.02) {
+  const pts: number[] = [];
+  const half = CELL / 2;
+  for (const o of others) {
+    const { hx, hz } = halfExtents(o);
+    // 该书架 footprint 覆盖的格子范围（格子中心在 CELL 整数倍上）
+    const i0 = Math.ceil((o.posX - hx - half) / CELL);
+    const i1 = Math.floor((o.posX + hx + half) / CELL);
+    const j0 = Math.ceil((o.posZ - hz - half) / CELL);
+    const j1 = Math.floor((o.posZ + hz + half) / CELL);
+    for (let i = i0; i <= i1; i++) {
+      for (let j = j0; j <= j1; j++) {
+        const cx = i * CELL;
+        const cz = j * CELL;
+        // 格子方形与 footprint 相交才算占用（贴边的排除）
+        if (cx + half <= o.posX - hx || cx - half >= o.posX + hx) continue;
+        if (cz + half <= o.posZ - hz || cz - half >= o.posZ + hz) continue;
+        pts.push(
+          cx - half, y, cz - half, cx + half, y, cz - half, cx + half, y, cz + half,
+          cx - half, y, cz - half, cx + half, y, cz + half, cx - half, y, cz + half,
+        );
+      }
+    }
+  }
+  return new Float32Array(pts);
 }

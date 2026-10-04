@@ -2,9 +2,9 @@ import { useState } from 'react';
 import { useStore } from '../store';
 
 /**
- * 「摆放」Tab：多图书馆管理 + 书架模型拖放。
- * 选中一个型号后进入摆放模式：3D 地面出现空格间距提示，
- * 幽灵书架吸附到最近空格，点击落位；R 旋转朝向，Esc 退出。
+ * 「摆放」Tab：多图书馆管理 + 书架摆放。
+ * 选型号进入摆放模式：0.6m 正方形网格 + 占用格子高亮，幽灵吸附最近方格，
+ * 左键落位、右键/ Esc 取消；也可以在 3D 里长按书架直接拖动重排。
  */
 export function PlacementPanel() {
   const {
@@ -19,7 +19,6 @@ export function PlacementPanel() {
 
   const active = placement.typeId != null;
   const moving = placement.mode === 'move';
-  const activeType = types.find((t) => t.id === placement.typeId);
   const movingShelf = shelves.find((s) => s.id === placement.shelfId);
 
   const doCreate = async () => {
@@ -128,19 +127,23 @@ export function PlacementPanel() {
           <p className="muted">
             {moving ? (
               <>
-                正在移动 <b>{movingShelf?.code}</b>：地面<b>绿色</b>空格 = 放得下，<b>红色</b> = 与相邻书架间距不足。
-                在绿色空格<b>单击左键</b>即落位并自动退出；按 <b>R</b> 旋转朝向（当前 {placement.rotation}°），<b>Esc</b> 取消。
+                正在移动 <b>{movingShelf?.code}</b>：地面按 0.6m 方格均分，琥珀色格子 =
+                已被占用，幽灵<b>绿色</b> = 放得下、<b>红色</b> = 间距不足。
+                长按抓起的<b>松开左键</b>即落位；点击「移动」进来的在绿色方格<b>单击左键</b>落位。
+                按 <b>R</b> 旋转朝向（当前 {placement.rotation}°），<b>右键</b>或 <b>Esc</b> 取消。
               </>
             ) : (
               <>
-                把鼠标移到 3D 地面：会出现「{activeType?.name}」的占地空格提示（侧向间隙 0.4m、走道 0.9m）。
-                地面<b>绿色</b>框 = 真实可落位，<b>红色</b> = 间距不足；幽灵上的亮线是模型占地范围。
-                <b>单击左键</b>落地并自动退出摆放，按 <b>R</b> 旋转朝向（当前 {placement.rotation}°），<b>Esc</b> 取消。编号自动生成。
+                地面按 0.6m <b>正方形方格</b>均分：琥珀色格子 = 已有书架占用，幽灵吸附最近方格，
+                <b>绿色</b> = 真实可落位、<b>红色</b> = 间距不足。<b>单击左键</b>落地并自动退出摆放，
+                按 <b>R</b> 旋转朝向（当前 {placement.rotation}°），<b>右键</b> / <b>Esc</b> 取消。编号自动生成。
               </>
             )}
           </p>
         ) : (
-          <p className="muted">选择一个型号进入摆放模式，在空地上直接摆出真实布局。</p>
+          <p className="muted">
+            选择一个型号进入摆放模式；也可以直接在 3D 里<b>长按</b>任意书架把它抓起来挪位置。
+          </p>
         )}
 
         {active && (
@@ -155,7 +158,8 @@ export function PlacementPanel() {
       <section className="panel">
         <h2>移动书架</h2>
         <p className="muted">
-          点击「移动」后进入同样的空格提示，只是这次挪的是已有书架（层数与藏书保持不变）。
+          点击「移动」进入吸附模式后单击落位；更直接的方式是在 3D 场景里
+          <b>按住书架约半秒</b>把它抓起来，拖到新位置<b>松开左键</b>落位（层数与藏书保持不变），右键取消。
         </p>
         {shelves.length === 0 && <p className="muted">当前馆还没有书架。</p>}
         <ul className="shelf-list">
