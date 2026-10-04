@@ -1,0 +1,22 @@
+# 依赖
+node_modules/
+
+# 构建产物
+dist/
+client/dist/
+server/dist/
+server/public/
+*.tsbuildinfo
+
+# 数据库（运行时生成，用 npm run seed 重建）
+**/prisma/dev.db
+**/prisma/dev.db-journal
+
+# 环境变量（复制 .env.example 后自行修改）
+.env
+
+# 杂项
+*.log
+.DS_Store
+.idea/
+.vscode/
