@@ -37,6 +37,21 @@ export const api = {
     json<Shelf>(`/shelves/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
   deleteShelf: (id: number) => json<Shelf>(`/shelves/${id}`, { method: 'DELETE' }),
 
+  /** 表格批量生成图书馆布局（三期） */
+  applyLayout: (body: {
+    clear?: boolean;
+    colGap?: number;
+    rowGap?: number;
+    items: { code: string; layerCount: number; row: number; col: number }[];
+  }) =>
+    json<{
+      cleared: { shelves: number; books: number } | null;
+      created: number;
+      grid: { rows: number; cols: number; stepX: number; stepZ: number };
+      typesUsed: { id: number; name: string; layerCount: number }[];
+      shelves: Shelf[];
+    }>('/shelves/layout', { method: 'POST', body: JSON.stringify(body) }),
+
   // ---- 图书 ----
   /** 全部书籍（带定位，用于在 3D 里摆书） */
   allBooks: () => json<BookHit[]>('/books'),

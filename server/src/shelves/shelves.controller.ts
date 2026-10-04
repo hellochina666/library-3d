@@ -32,6 +32,16 @@ export class ShelvesController {
     return this.service.createType(body);
   }
 
+  /**
+   * POST /shelves/layout —— 表格批量生成图书馆布局（三期）
+   * 必须声明在 POST /shelves 之前没有静态段冲突，但为清晰起见放在 create 旁边；
+   * 路由是精确匹配 /shelves/layout，不会被 /shelves/:id 之类的 GET 影响。
+   */
+  @Post('layout')
+  applyLayout(@Body() body: any) {
+    return this.service.applyLayout(body);
+  }
+
   /** POST /shelves —— 新增实体书架，自动按型号生成层 */
   @Post()
   create(@Body() body: any) {

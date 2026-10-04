@@ -188,3 +188,28 @@ button.mini:disabled { opacity: .4; cursor: not-allowed; }
 }
 .bk-main { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .layer-books li .li-actions { align-self: flex-end; }
+
+/* ---------- 布局表格（三期：表格生成 3D 图书馆） ---------- */
+.lg-toolbar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 10px; }
+.lg-sep { width: 1px; height: 18px; background: #333c47; margin: 0 2px; }
+
+.lg-table-wrap { overflow-x: auto; border: 1px solid #2c333d; border-radius: 8px; background: #1a1e25; }
+.lg-table { border-collapse: collapse; }
+.lg-table th {
+  font-size: 10px; font-weight: 400; color: #7f8a96;
+  padding: 4px 5px; white-space: nowrap; text-align: center;
+}
+.lg-table th.lg-corner { width: 44px; }
+.lg-table td { padding: 3px; }
+
+.lg-cell {
+  width: 86px; margin-top: 0; padding: 6px 4px; text-align: center;
+  font-size: 12px; background: #14171c;
+}
+.lg-cell::placeholder { color: #4a5563; }
+.lg-cell.bad { border-color: #d9534f; background: #2a1a1a; }
+
+.lg-preview { margin: 10px 0 4px; display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+.lg-preview .chip { background: #2a2519; color: #f5b942; }
+
+.ok { color: #7dd87d; font-size: 12px; margin: 6px 0; }

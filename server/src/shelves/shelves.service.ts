@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import type { ShelfType } from '@prisma/client';
 import { PrismaService } from '../prisma.service';
 
 export interface CreateShelfTypeDto {
@@ -17,6 +18,28 @@ export interface CreateShelfDto {
   posZ?: number;
   rotation?: number;
   zone?: string;
+}
+
+/** 表格生成布局：一个格子 = 一个书架 */
+export interface LayoutItemDto {
+  /** 书架编号，如 A-01 */
+  code: string;
+  /** 层数（决定用哪个型号） */
+  layerCount: number;
+  /** 行号（0 起，从前往后 → posZ） */
+  row: number;
+  /** 列号（0 起，从左往右 → posX） */
+  col: number;
+}
+
+export interface ApplyLayoutDto {
+  /** 是否先清空现有全部书架（连带书）。默认 true —— 表格代表图书馆全貌 */
+  clear?: boolean;
+  /** 同排相邻书架间隙（米），默认 0.5 */
+  colGap?: number;
+  /** 排与排之间走道宽度（米），默认 1.2 */
+  rowGap?: number;
+  items: LayoutItemDto[];
 }
 
 @Injectable()
@@ -158,5 +181,123 @@ export class ShelvesService {
       );
     }
     return this.prisma.shelfType.delete({ where: { id } });
+  }
+
+  /**
+   * 按表格批量生成图书馆布局（三期：自定义生成 3D 图书馆）。
+   *
+   * 表格语义：row/col 代表地面网格，(row, col) 处有 item 就放一个书架，
+   * 没有就是过道。坐标由后端按真实书架尺寸计算，保证不重叠、行列对齐。
+   *
+   * 型号策略：优先复用库里层数相同的型号；没有才自动创建「标准-N层」。
+   */
+  async applyLayout(dto: ApplyLayoutDto) {
+    const items = dto?.items ?? [];
+    if (!Array.isArray(items) || items.length === 0) {
+      throw new BadRequestException('items 不能为空：表格里至少要有一个书架');
+    }
+
+    // ---- 逐项校验 ----
+    const seen = new Map<string, string>(); // code -> 位置描述
+    let maxRow = 0;
+    let maxCol = 0;
+    for (const it of items) {
+      const code = String(it?.code ?? '').trim();
+      const layerCount = Number(it?.layerCount);
+      const row = Number(it?.row);
+      const col = Number(it?.col);
+      if (!code) throw new BadRequestException('书架编号 code 不能为空');
+      if (!Number.isInteger(layerCount) || layerCount < 1 || layerCount > 20) {
+        throw new BadRequestException(`「${code}」的层数必须是 1~20 的整数`);
+      }
+      if (!Number.isInteger(row) || row < 0 || row > 99 || !Number.isInteger(col) || col < 0 || col > 99) {
+        throw new BadRequestException(`「${code}」的行/列号必须是 0~99 的整数`);
+      }
+      const at = `第${row + 1}排第${col + 1}列`;
+      if (seen.has(code)) {
+        throw new BadRequestException(`编号 ${code} 在表格里出现了两次（${seen.get(code)} 和 ${at}）`);
+      }
+      seen.set(code, at);
+      if (row > maxRow) maxRow = row;
+      if (col > maxCol) maxCol = col;
+    }
+
+    const colGap = Number.isFinite(Number(dto.colGap)) && Number(dto.colGap) >= 0 ? Number(dto.colGap) : 0.5;
+    const rowGap = Number.isFinite(Number(dto.rowGap)) && Number(dto.rowGap) >= 0 ? Number(dto.rowGap) : 1.2;
+    const clear = dto.clear !== false;
+
+    // ---- 现有数据规模（用于返回统计）----
+    const [oldShelves, oldBooks] = await Promise.all([
+      this.prisma.shelf.count(),
+      this.prisma.book.count(),
+    ]);
+
+    // ---- 按层数解析型号（复用优先，缺则自动建）----
+    const layerCounts = [...new Set(items.map((it) => Number(it.layerCount)))].sort((a, b) => a - b);
+    const typeByLayer = new Map<number, ShelfType>();
+    for (const lc of layerCounts) {
+      let type = await this.prisma.shelfType.findFirst({
+        where: { layerCount: lc },
+        orderBy: { id: 'asc' },
+      });
+      if (!type) {
+        const name = `标准-${lc}层`;
+        try {
+          type = await this.prisma.shelfType.create({
+            data: { name, layerCount: lc, layerHeight: 0.34, width: 1.0, depth: 0.32, slotsPerLayer: 40 },
+          });
+        } catch {
+          // 并发或同名冲突兜底：按名字再取一次
+          type = await this.prisma.shelfType.findUniqueOrThrow({ where: { name } });
+        }
+      }
+      typeByLayer.set(lc, type);
+    }
+
+    // ---- 计算网格步长：取本批书架的最大宽/深，保证任何混排都不重叠 ----
+    const usedTypes = items.map((it) => typeByLayer.get(Number(it.layerCount))!);
+    const maxWidth = Math.max(...usedTypes.map((t) => t.width));
+    const maxDepth = Math.max(...usedTypes.map((t) => t.depth));
+    const stepX = maxWidth + colGap;
+    const stepZ = maxDepth + rowGap;
+
+    // ---- 事务：清旧 → 逐个建（书架 + 按型号自动展开层）----
+    const created = await this.prisma.$transaction(async (tx) => {
+      if (clear) {
+        // Layer/Book 对 Shelf 是级联删除（schema onDelete: Cascade），deleteMany 一并清掉
+        await tx.shelf.deleteMany({});
+      }
+      const list = [];
+      for (const it of items) {
+        const type = typeByLayer.get(Number(it.layerCount))!;
+        const shelf = await tx.shelf.create({
+          data: {
+            code: String(it.code).trim(),
+            typeId: type.id,
+            posX: Number((it.col * stepX).toFixed(3)),
+            posZ: Number((it.row * stepZ).toFixed(3)),
+            rotation: 0,
+            zone: `第${it.row + 1}排`,
+            layers: {
+              create: Array.from({ length: type.layerCount }, (_, i) => ({
+                layerIndex: i + 1,
+                capacity: type.slotsPerLayer,
+              })),
+            },
+          },
+          include: { type: true, layers: true },
+        });
+        list.push(shelf);
+      }
+      return list;
+    });
+
+    return {
+      cleared: clear ? { shelves: oldShelves, books: oldBooks } : null,
+      created: created.length,
+      grid: { rows: maxRow + 1, cols: maxCol + 1, stepX, stepZ },
+      typesUsed: [...typeByLayer.values()].map((t) => ({ id: t.id, name: t.name, layerCount: t.layerCount })),
+      shelves: created,
+    };
   }
 }

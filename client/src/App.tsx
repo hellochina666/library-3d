@@ -8,6 +8,7 @@ import { AddBookForm } from './ui/AddBookForm';
 import { ShelfManager } from './ui/ShelfManager';
 import { ShelfTypeManager } from './ui/ShelfTypeManager';
 import { StatsPanel } from './ui/StatsPanel';
+import { LayoutGrid } from './ui/LayoutGrid';
 
 /** 检测浏览器是否支持 WebGL，避免不支持时整页白屏 */
 function detectWebGL() {
@@ -22,6 +23,7 @@ function detectWebGL() {
 const TABS = [
   { key: 'search', label: '检索' },
   { key: 'manage', label: '管理' },
+  { key: 'layout', label: '布局' },
   { key: 'stats', label: '统计' },
 ] as const;
 
@@ -104,6 +106,7 @@ export default function App() {
             <ShelfTypeManager />
           </>
         )}
+        {tab === 'layout' && <LayoutGrid />}
         {tab === 'stats' && <StatsPanel />}
       </aside>
     </div>

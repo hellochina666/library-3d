@@ -21,8 +21,8 @@ interface State {
 
   highlight: Highlight | null;
   pickedLayer: PickedLayer | null;
-  /** 当前 Tab：检索 / 管理 / 统计 */
-  tab: 'search' | 'manage' | 'stats';
+  /** 当前 Tab：检索 / 管理 / 布局 / 统计 */
+  tab: 'search' | 'manage' | 'layout' | 'stats';
 
   loadAll: () => Promise<void>;
   search: (q: string) => Promise<void>;
@@ -55,6 +55,11 @@ interface State {
   }) => Promise<void>;
   updateShelf: (id: number, body: Partial<Shelf>) => Promise<void>;
   removeShelf: (id: number) => Promise<void>;
+
+  /** 表格生成布局：整体重建（清空旧布局），成功后自动重拉全量 */
+  applyLayout: (
+    items: { code: string; layerCount: number; row: number; col: number }[],
+  ) => Promise<{ created: number; cleared: { shelves: number; books: number } | null }>;
 
   addType: (body: Partial<ShelfType>) => Promise<void>;
   removeType: (id: number) => Promise<void>;
@@ -157,13 +162,21 @@ export const useStore = create<State>((set, get) => ({
     await get().loadAll();
   },
 
-  removeShelf: async (id) => {
+  removeShelf: async (id: number) => {
     await api.deleteShelf(id);
     await get().loadAll();
     // 架子没了，清掉相关高亮与选中
     const { highlight, pickedLayer } = get();
     if (highlight?.shelfId === id) set({ highlight: null });
     if (pickedLayer?.shelfId === id) set({ pickedLayer: null });
+  },
+
+  /** 表格生成布局：整体重建图书馆。成功后清掉高亮并重拉全量 */
+  applyLayout: async (items) => {
+    const res = await api.applyLayout({ clear: true, items });
+    set({ highlight: null, pickedLayer: null, results: null, query: '' });
+    await get().loadAll();
+    return { created: res.created, cleared: res.cleared };
   },
 
   addType: async (body) => {
