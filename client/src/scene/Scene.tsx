@@ -188,10 +188,12 @@ export function Scene({ shelves, books, highlight, placement, quality = 'desktop
   /**
    * 环境反射：暖色天光 + 窗侧高光，让木头和金属有真实镜面过渡。
    * 用 useMemo 固定元素：Environment 的 children 每次换引用都会重烘一次 cube map。
+   * 桌面档烘到 512 —— cubemap 分辨率直接决定反射里能不能读出窗框形状；
+   * 手机档留 128，它本来就靠降档保帧率，提高只吃显存不换视觉。
    */
   const env = useMemo(
     () => (
-      <Environment resolution={128} frames={1}>
+      <Environment resolution={phone ? 128 : 512} frames={1}>
         <color attach="background" args={['#e6d8c0']} />
         <Lightformer form="rect" intensity={1.5} color={'#ffe2b8'} position={[rect.minX, 1.8, cz]} rotation={[0, Math.PI / 2, 0]} scale={[3, 2.5, 1]} />
         <Lightformer form="rect" intensity={0.55} color={'#fff3e0'} position={[cx, rect.height, cz]} rotation={[Math.PI / 2, 0, 0]} scale={[8, 8, 1]} />
@@ -199,7 +201,7 @@ export function Scene({ shelves, books, highlight, placement, quality = 'desktop
       </Environment>
     ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [rect],
+    [rect, phone],
   );
 
   return (

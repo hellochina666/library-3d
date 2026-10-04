@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import * as THREE from 'three';
-import { aoBlobTexture, artTexture, clothTexture, floorBumpTexture, floorTexture, rugTexture, wallTexture, woodTexture } from './materials';
+import { aoBlobTexture, artTexture, clothTexture, rugTexture, scanTexture, wallTexture, woodTexture } from './materials';
 
 export interface RoomRect {
   minX: number;
@@ -13,6 +13,10 @@ export interface RoomRect {
 interface Props {
   rect: RoomRect;
 }
+
+/** 扫描法线图的强度：墙面抹灰的起伏比地板更怕过冲，压到 0.6 才不像浮雕 */
+const FLOOR_NORMAL_SCALE = new THREE.Vector2(1, 1);
+const WALL_NORMAL_SCALE = new THREE.Vector2(0.6, 0.6);
 
 /**
  * 程序化室内环境（温馨现代简约风）：
@@ -27,26 +31,10 @@ export function Room({ rect }: Props) {
   const cx = (rect.minX + rect.maxX) / 2;
   const cz = (rect.minZ + rect.maxZ) / 2;
 
-  const floor = useMemo(() => {
-    const t = floorTexture().clone();
-    t.needsUpdate = true;
-    t.repeat.set(w / 3.2, d / 3.2);
-    return t;
-  }, [w, d]);
-
-  const floorBump = useMemo(() => {
-    const t = floorBumpTexture().clone();
-    t.needsUpdate = true;
-    t.repeat.set(w / 3.2, d / 3.2);
-    return t;
-  }, [w, d]);
-
-  const wall = useMemo(() => {
-    const t = wallTexture().clone();
-    t.needsUpdate = true;
-    t.repeat.set(w / 4, 1);
-    return t;
-  }, [w]);
+  // 扫描贴图必须按真实物理尺寸铺贴：地板扫描件一拍是 2m×2m、墙面 3m×3m。
+  // 老写法 repeat.set(w / 4, 1) 把一整张图纵向拉伸到墙高，就是「贴图糊」的直接成因。
+  const floorRepeat: [number, number] = [w / 2, d / 2];
+  const wallRepeat: [number, number] = [w / 3, h / 3];
 
   const wall2 = useMemo(() => {
     const t = wallTexture().clone();
@@ -63,25 +51,35 @@ export function Room({ rect }: Props) {
 
   return (
     <group>
-      {/* 地板：physical 材质 + 板缝凹凸 + 一层清漆，木纹在侧光下有层次 */}
+      {/* 地板：扫描 PBR 三件套。roughness 标量必须留 1，否则会把 roughnessMap 乘暗；
+          clearcoat 是 laminate 表面那层清漆，与粗糙度贴图不冲突 */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[cx, 0, cz]} receiveShadow raycast={noRaycast}>
         <planeGeometry args={[w, d]} />
         <meshPhysicalMaterial
-          map={floor}
-          bumpMap={floorBump}
-          bumpScale={0.55}
-          roughness={0.52}
-          metalness={0.02}
-          clearcoat={0.3}
+          map={scanTexture('laminate_floor_diff_2k.jpg', floorRepeat)}
+          normalMap={scanTexture('laminate_floor_nor_gl_2k.jpg', floorRepeat, false)}
+          normalScale={FLOOR_NORMAL_SCALE}
+          roughnessMap={scanTexture('laminate_floor_rough_2k.jpg', floorRepeat, false)}
+          roughness={1}
+          metalness={0}
+          clearcoat={0.28}
           clearcoatRoughness={0.5}
-          envMapIntensity={0.65}
+          envMapIntensity={0.8}
         />
       </mesh>
 
-      {/* 后墙（-Z 侧）：暖调强调墙，衬托书架与挂画 */}
+      {/* 后墙（-Z 侧）：暖调强调墙，衬托书架与挂画。左墙仍用程序纹理，便于同屏 A/B */}
       <mesh position={[cx, h / 2, rect.minZ]} raycast={noRaycast} receiveShadow>
         <planeGeometry args={[w, h]} />
-        <meshStandardMaterial map={wall} bumpMap={wall} bumpScale={0.12} color={'#d9c8ab'} roughness={0.95} envMapIntensity={0.15} />
+        <meshStandardMaterial
+          map={scanTexture('beige_wall_001_diff_2k.jpg', wallRepeat)}
+          normalMap={scanTexture('beige_wall_001_nor_gl_2k.jpg', wallRepeat, false)}
+          normalScale={WALL_NORMAL_SCALE}
+          roughnessMap={scanTexture('beige_wall_001_rough_2k.jpg', wallRepeat, false)}
+          roughness={1}
+          metalness={0}
+          envMapIntensity={0.5}
+        />
       </mesh>
 
       {/* 左墙（-X 侧，开窗）：奶油色，法线朝内，相机转到外侧时自动透明 */}

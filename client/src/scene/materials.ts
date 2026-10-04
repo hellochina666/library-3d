@@ -1,8 +1,10 @@
 import * as THREE from 'three';
 
 /**
- * 程序化 Canvas 纹理：木饰面 / 地板 / 墙面 / 书页 / 布面书封 / 地毯。
- * 全部用代码绘制并缓存，不依赖任何外部图片资源。
+ * 纹理来源有两类：
+ * 1. 程序化 Canvas 纹理（本文件下半部分）：木饰面 / 墙面 / 书页 / 布面书封 / 地毯，代码绘制并缓存。
+ * 2. 外部扫描贴图（scanTexture）：地板与墙面的 PBR 三件套，来自 public/textures/。
+ *    来源、作者与压缩方式见 docs/texture-credits.md。
  */
 
 const cache = new Map<string, THREE.CanvasTexture>();
@@ -27,8 +29,33 @@ function canvas(size: number, height?: number) {
   return c.getContext('2d')!;
 }
 
-/** 可复现随机数（同一本书每次渲染样子不变） */
-export function seededRandom(seed: number) {
+/**
+ * 外部扫描贴图（Poly Haven，CC0）：按 URL 异步加载并缓存。
+ *
+ * repeat 直接进加载器而不是 clone()：clone 出来的副本与原图共享 Source，
+ * 但 three.js 按 texture.version 决定是否上传，原图加载完成时副本不会重新上传，
+ * 于是表现为「有的面贴上了、有的面是白的」。铺贴尺寸本来就只有几种，按 key 缓存即可。
+ *
+ * 数据贴图（normal / roughness）必须留 NoColorSpace：一旦被当颜色做 sRGB 解码，
+ * 凹凸会整体变平、粗糙度会偏亮。
+ */
+const scanCache = new Map<string, THREE.Texture>();
+
+export function scanTexture(file: string, repeat: [number, number], srgb = true): THREE.Texture {
+  const key = `${file}@${repeat[0]}x${repeat[1]}`;
+  const hit = scanCache.get(key);
+  if (hit) return hit;
+  const tex = new THREE.TextureLoader().load(`/textures/${file}`);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(repeat[0], repeat[1]);
+  tex.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+  // 超过驱动上限时 three.js 会在上传前自行夹取，写死最大值即可
+  tex.anisotropy = 16;
+  scanCache.set(key, tex);
+  return tex;
+}
+
+/** 可复现随机数（同一本书每次渲染样子不变） */export function seededRandom(seed: number) {
   let s = seed >>> 0;
   return () => {
     s = (s * 1664525 + 1013904223) >>> 0;
