@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import type { ShelfType } from '@prisma/client';
-import { PrismaService } from '../prisma.service';
+import { PrismaService } from '../database/prisma.service';
 import { assertFits, type Footprint } from './placement';
 
 export interface CreateShelfTypeDto {
