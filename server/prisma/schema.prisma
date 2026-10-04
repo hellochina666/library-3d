@@ -1,0 +1,93 @@
+// 3D 图书管理系统 —— 物理布局数据模型
+//
+// 设计要点：
+// 1. ShelfType 决定「这个型号的书架有几层」，从而支持现实中不同的书架层数不同。
+// 2. Shelf 是现实中的一个具体书架，带物理坐标 posX/posZ/rotation，3D 场景按它摆放。
+// 3. Layer 由 Shelf 按型号自动展开，是书籍归档与高亮的最小单位。
+// 4. Book 必须同时落在 shelfId + layerId + slotIndex，三个坐标缺一不可。
+//
+// 切换 PostgreSQL：把下面的 provider 改成 "postgresql"，并改 .env 的 DATABASE_URL。
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+/// 书架型号：定义层数与各层尺寸
+model ShelfType {
+  id            Int      @id @default(autoincrement())
+  name          String   @unique
+  /// 层数（现实中不同书架层数不同，由此字段驱动）
+  layerCount    Int
+  /// 单层净高（米）
+  layerHeight   Float    @default(0.34)
+  /// 书架宽度（米）
+  width         Float    @default(1.0)
+  /// 书架进深（米）
+  depth         Float    @default(0.32)
+  /// 每层可容纳的书籍槽位数
+  slotsPerLayer Int      @default(40)
+  shelves       Shelf[]
+  createdAt     DateTime @default(now())
+}
+
+/// 现实中的一个具体书架（3D 场景按此摆放）
+model Shelf {
+  id      Int       @id @default(autoincrement())
+  /// 书架编号，如 "A-01"
+  code    String    @unique
+  typeId  Int
+  type    ShelfType @relation(fields: [typeId], references: [id])
+  /// 3D 世界坐标 X（米）
+  posX    Float     @default(0)
+  /// 3D 世界坐标 Z（米）
+  posZ    Float     @default(0)
+  /// 朝向（度）
+  rotation Float    @default(0)
+  /// 所属区域/房间，如 "二楼社科区"
+  zone    String?
+  layers  Layer[]
+  books   Book[]
+  createdAt DateTime @default(now())
+
+  @@index([zone])
+}
+
+/// 书架的某一层（创建书架时按型号自动生成）
+model Layer {
+  id       Int    @id @default(autoincrement())
+  shelfId  Int
+  shelf    Shelf  @relation(fields: [shelfId], references: [id], onDelete: Cascade)
+  /// 层号，从 1 开始到 type.layerCount
+  layerIndex Int
+  /// 该层容量（默认继承型号）
+  capacity Int?
+  books    Book[]
+
+  @@unique([shelfId, layerIndex])
+  @@index([shelfId])
+}
+
+/// 书籍：必须落在具体的 架子 + 层 + 槽位
+model Book {
+  id        Int      @id @default(autoincrement())
+  isbn      String?
+  title     String
+  author    String?
+  /// 归档位置三要素
+  shelfId   Int
+  shelf     Shelf    @relation(fields: [shelfId], references: [id], onDelete: Cascade)
+  layerId   Int
+  layer     Layer    @relation(fields: [layerId], references: [id], onDelete: Cascade)
+  /// 层内槽位序号（0 开始）
+  slotIndex Int
+  createdAt DateTime @default(now())
+
+  @@unique([layerId, slotIndex])
+  @@index([title])
+  @@index([isbn])
+}
