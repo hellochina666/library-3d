@@ -6,6 +6,8 @@
 | --- | --- | --- | --- | --- |
 | `laminate_floor_*` | [laminate_floor](https://polyhaven.com/a/laminate_floor) | Dario Barresi, Dimitrios Savva | 2000×2000 mm（一拍 2m） | 地板 albedo / normal / roughness |
 | `beige_wall_001_*` | [beige_wall_001](https://polyhaven.com/a/beige_wall_001) | Dimitrios Savva, Rico Cilliers | 3000×3000 mm（一拍 3m） | 后墙 albedo / normal / roughness |
+| `oak_veneer_diff_2k` / `oak_veneer_nor_gl_2k` / `oak_veneer_rough_1k` | [oak_veneer_01](https://polyhaven.com/a/oak_veneer_01) | Jenelle van Heerden | 1830×1830 mm（一拍 1.83m） | 书架框体橡木饰面 albedo / normal / roughness |
+| `walnut_veneer_*`（1k） | [walnut_veneer](https://polyhaven.com/a/walnut_veneer) | Jenelle van Heerden | 1800×1800 mm（一拍 1.8m） | 书架导视牌底座等深色木作 albedo / normal / roughness |
 
 后缀：`diff` = 反照率，`nor_gl` = OpenGL 约定法线，`rough` = 粗糙度。
 
@@ -16,4 +18,6 @@
 - `diff`：`-q:v 3`（颜色图，亚采样损失肉眼不可见）
 - `nor_gl` / `rough`：`-pix_fmt rgb24 -q:v 2`。数据贴图必须关闭 4:2:0 色度亚采样，否则法线的 RG 通道被邻域平均、凹凸细节被抹平；代价是墙面法线图反而从 815KB 涨到 973KB，属于用体积换保真度的有意取舍。
 
-`dimensions`（物理尺寸）取自 Poly Haven `/assets?type=textures` 列表接口，代码里据此按米铺贴，不是随意估值。
+木饰面（oak_veneer_01 / walnut_veneer）同为 JPG 直下，仅做轻压缩：橡木 diff/nor 用 `-q:v 2~3` 保持 2K，roughness 图为低频数据降采样到 1K（`-vf scale=1024:1024:flags=lanczos -pix_fmt rgb24 -q:v 2`）；胡桃全套直接用 1K。两套合计约 3.2MB。
+
+`dimensions`（物理尺寸）取自 Poly Haven `/assets?type=textures` 列表接口，代码里据此按米铺贴，不是随意估值。木饰面的"按米铺贴"由 `fitGrainUVs()` 在 BoxGeometry 的 UV 上完成：1 纹理单位 = 一拍米数，木纹方向自动跟随每张面的长边。

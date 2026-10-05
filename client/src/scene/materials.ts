@@ -55,6 +55,74 @@ export function scanTexture(file: string, repeat: [number, number], srgb = true)
   return tex;
 }
 
+// ---- 扫描木饰面（书架主材，Poly Haven CC0） ----
+// 木饰面按"一拍真实尺寸"参与铺贴：oak_veneer_01 一拍 1.83m、walnut_veneer 一拍 1.8m，
+// UV 由 fitGrainUVs 按米换算，repeat 恒为 (1,1)。
+export interface VeneerMaps {
+  map: THREE.Texture;
+  normalMap: THREE.Texture;
+  roughnessMap: THREE.Texture;
+  /** 一拍对应的物理尺寸（米） */
+  tile: number;
+}
+
+const VENEER_FILES: Record<'oak' | 'walnut', { files: [string, string, string]; tile: number }> = {
+  oak: { files: ['oak_veneer_diff_2k.jpg', 'oak_veneer_nor_gl_2k.jpg', 'oak_veneer_rough_1k.jpg'], tile: 1.83 },
+  walnut: { files: ['walnut_veneer_diff_1k.jpg', 'walnut_veneer_nor_gl_1k.jpg', 'walnut_veneer_rough_1k.jpg'], tile: 1.8 },
+};
+
+const veneerCache = new Map<'oak' | 'walnut', VeneerMaps>();
+
+/** 书架/木作用扫描木饰面三件套（diff + normal + roughness），全程只加载一份 */
+export function veneerMaps(kind: 'oak' | 'walnut'): VeneerMaps {
+  const hit = veneerCache.get(kind);
+  if (hit) return hit;
+  const { files, tile } = VENEER_FILES[kind];
+  const maps: VeneerMaps = {
+    map: scanTexture(files[0], [1, 1]),
+    normalMap: scanTexture(files[1], [1, 1], false),
+    roughnessMap: scanTexture(files[2], [1, 1], false),
+    tile,
+  };
+  veneerCache.set(kind, maps);
+  return maps;
+}
+
+/**
+ * 把 BoxGeometry 的 UV 重排成"按物理尺寸铺贴"：
+ * 1 个纹理单位 = tile 米，六张面各自按真实边长换算，
+ * 木纹（贴图 V 向）始终顺着该面的长边走，长边短边互换时 U/V 轴跟着换。
+ * 每块料再用 rnd 加一段随机相位——同一书架里没有两块板纹路重样。
+ * 仅适用于未细分的 BoxGeometry（24 顶点，面序 px,nx,py,ny,pz,nz）。
+ */
+export function fitGrainUVs(
+  geo: THREE.BufferGeometry,
+  size: [number, number, number],
+  tile: number,
+  rnd: () => number,
+) {
+  const uv = geo.attributes.uv as THREE.BufferAttribute;
+  const s = { x: size[0], y: size[1], z: size[2] };
+  // 每张面 UV 轴对应的世界轴
+  const axes: Array<['x' | 'y' | 'z', 'x' | 'y' | 'z']> = [
+    ['z', 'y'], ['z', 'y'], // ±X
+    ['x', 'z'], ['x', 'z'], // ±Y
+    ['x', 'y'], ['x', 'y'], // ±Z
+  ];
+  const offU = rnd();
+  const offV = rnd();
+  for (let f = 0; f < 6; f++) {
+    let [ua, va] = axes[f];
+    if (s[ua] > s[va]) [ua, va] = [va, ua]; // V（木纹方向）跟长边
+    const uScale = s[ua] / tile;
+    const vScale = s[va] / tile;
+    for (let i = f * 4; i < f * 4 + 4; i++) {
+      uv.setXY(i, uv.getX(i) * uScale + offU, uv.getY(i) * vScale + offV);
+    }
+  }
+  uv.needsUpdate = true;
+}
+
 /** 可复现随机数（同一本书每次渲染样子不变） */export function seededRandom(seed: number) {
   let s = seed >>> 0;
   return () => {
@@ -211,6 +279,153 @@ export function clothTexture() {
 /** 布面织纹的凹凸图：书封近看有织物起伏 */
 export function clothBumpTexture() {
   return cached('clothbump', () => toBump(clothTexture().image as HTMLCanvasElement, 1.8), [1, 1], false);
+}
+
+// ---- 精装书装订贴图（程序绘制，全书共享两版，靠 material.color 染色） ----
+// 一张贴图同时服务六张面（RoundedBox 的 6 个分组共用）：
+// 横向特征（书脊棱线/竹节、装订槽、标签区）以"高度百分比"画在 V 向，
+// 竖向金框画在 U 向两端 —— 映射到书脊面正好是沿边的烫金导轨，
+// 映射到前后封面则是经典精装烫金边框。金色用亮色绘制，被封面色乘色后呈古铜箔。
+
+/** 精装版式：0=四竹节 + 上部标签，1=双竹节 + 下移标签 */
+export type BookBinding = 0 | 1;
+
+const BINDING_LAYOUT: Record<BookBinding, { bands: number[]; label: [number, number] }> = {
+  0: { bands: [0.585, 0.645, 0.705, 0.775], label: [0.3, 0.47] },
+  1: { bands: [0.615, 0.74], label: [0.55, 0.71] },
+};
+
+/** 装订构图的公共坐标（比例） */
+const BINDING_FRAME = { u0: 0.055, u1: 0.945, v0: 0.042, v1: 0.958 };
+const BINDING_LABEL_U: [number, number] = [0.16, 0.84];
+
+function paintBookCloth(variant: BookBinding, mode: 'color' | 'bump') {
+  const W = 256;
+  const H = 512;
+  const ctx = canvas(W, H);
+  const rnd = seededRandom(900 + variant * 37 + (mode === 'bump' ? 5 : 0));
+  const { bands, label } = BINDING_LAYOUT[variant];
+
+  if (mode === 'color') {
+    ctx.fillStyle = '#efe9de';
+    ctx.fillRect(0, 0, W, H);
+    // 亚麻布纹：横竖短线交织，明暗交替
+    for (let i = 0; i < 2400; i++) {
+      const horiz = rnd() > 0.5;
+      const v = 175 + Math.floor(rnd() * 80);
+      ctx.fillStyle = `rgba(${v},${v - 8},${v - 22},${0.1 + rnd() * 0.14})`;
+      ctx.fillRect(rnd() * W, rnd() * H, horiz ? 2 + rnd() * 4 : 1, horiz ? 1 : 2 + rnd() * 4);
+    }
+    // 靠装订侧的细布边（书脊布与封面布的接缝过渡）
+    const edge = ctx.createLinearGradient(0, 0, W, 0);
+    edge.addColorStop(0, 'rgba(120,100,72,0.16)');
+    edge.addColorStop(0.05, 'rgba(120,100,72,0)');
+    edge.addColorStop(0.95, 'rgba(120,100,72,0)');
+    edge.addColorStop(1, 'rgba(120,100,72,0.16)');
+    ctx.fillStyle = edge;
+    ctx.fillRect(0, 0, W, H);
+
+    // 全周烫金双线框：书脊面上是沿边导轨，封面上是经典精装边框
+    ctx.strokeStyle = '#dfc07c';
+    ctx.lineWidth = 3;
+    ctx.strokeRect(BINDING_FRAME.u0 * W, BINDING_FRAME.v0 * H, (BINDING_FRAME.u1 - BINDING_FRAME.u0) * W, (BINDING_FRAME.v1 - BINDING_FRAME.v0) * H);
+    ctx.strokeStyle = 'rgba(223,192,124,0.72)';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(
+      (BINDING_FRAME.u0 + 0.022) * W, (BINDING_FRAME.v0 + 0.014) * H,
+      (BINDING_FRAME.u1 - BINDING_FRAME.u0 - 0.044) * W, (BINDING_FRAME.v1 - BINDING_FRAME.v0 - 0.028) * H,
+    );
+
+    // 封面板槽上下的压痕（装订槽）
+    for (const v of [0.075, 0.925]) {
+      ctx.fillStyle = 'rgba(105,86,60,0.5)';
+      ctx.fillRect(0, v * H - 2, W, 3);
+      ctx.fillStyle = 'rgba(255,250,240,0.5)';
+      ctx.fillRect(0, v * H + 2, W, 1.5);
+    }
+
+    // 书脊竹节（精装棱线）：亮棱 + 下方阴影
+    for (const v of bands) {
+      ctx.fillStyle = 'rgba(110,90,62,0.42)';
+      ctx.fillRect(0, v * H + 3, W, 3);
+      ctx.fillStyle = '#f7f1e4';
+      ctx.fillRect(0, v * H - 2, W, 4);
+    }
+
+    // 书名标签：面板 + 烫金边 + 三道抽象书名金线
+    const [lv0, lv1] = label;
+    const lx = BINDING_LABEL_U[0] * W;
+    const lw = (BINDING_LABEL_U[1] - BINDING_LABEL_U[0]) * W;
+    const ly = lv0 * H;
+    const lh = (lv1 - lv0) * H;
+    ctx.fillStyle = 'rgba(246,240,228,0.75)';
+    ctx.fillRect(lx, ly, lw, lh);
+    ctx.strokeStyle = '#d9b96e';
+    ctx.lineWidth = 3;
+    ctx.strokeRect(lx + 4, ly + 4, lw - 8, lh - 8);
+    ctx.strokeStyle = 'rgba(190,148,74,0.85)';
+    ctx.lineWidth = 2.5;
+    ctx.textAlign = 'center';
+    for (let i = 0; i < 3; i++) {
+      const y = ly + lh * (0.32 + i * 0.18);
+      const wHalf = lw * (i === 1 ? 0.34 : 0.26);
+      ctx.beginPath();
+      ctx.moveTo(W / 2 - wHalf, y);
+      ctx.lineTo(W / 2 + wHalf, y);
+      ctx.stroke();
+    }
+  } else {
+    // 凹凸图：中灰为基准，竹节凸起、槽线/金框压痕下凹
+    ctx.fillStyle = '#808080';
+    ctx.fillRect(0, 0, W, H);
+    for (let i = 0; i < 2600; i++) {
+      const v = rnd() > 0.5 ? 165 : 95;
+      ctx.fillStyle = `rgba(${v},${v},${v},${0.12 + rnd() * 0.16})`;
+      ctx.fillRect(rnd() * W, rnd() * H, rnd() > 0.5 ? 2 + rnd() * 3 : 1, rnd() > 0.5 ? 1 : 2 + rnd() * 3);
+    }
+    for (const v of [0.075, 0.925]) {
+      ctx.fillStyle = '#5a5a5a';
+      ctx.fillRect(0, v * H - 2, W, 4);
+    }
+    ctx.strokeStyle = '#5f5f5f';
+    ctx.lineWidth = 2.5;
+    ctx.strokeRect(BINDING_FRAME.u0 * W, BINDING_FRAME.v0 * H, (BINDING_FRAME.u1 - BINDING_FRAME.u0) * W, (BINDING_FRAME.v1 - BINDING_FRAME.v0) * H);
+    for (const v of bands) {
+      ctx.fillStyle = '#b8b8b8';
+      ctx.fillRect(0, v * H - 3, W, 6);
+    }
+    const [lv0, lv1] = label;
+    const lx = BINDING_LABEL_U[0] * W;
+    const lw = (BINDING_LABEL_U[1] - BINDING_LABEL_U[0]) * W;
+    const ly = lv0 * H;
+    const lh = (lv1 - lv0) * H;
+    ctx.fillStyle = '#787878';
+    ctx.fillRect(lx, ly, lw, lh);
+    ctx.strokeStyle = '#606060';
+    ctx.lineWidth = 3;
+    ctx.strokeRect(lx + 4, ly + 4, lw - 8, lh - 8);
+    ctx.strokeStyle = '#a8a8a8';
+    ctx.lineWidth = 2.5;
+    for (let i = 0; i < 3; i++) {
+      const y = ly + lh * (0.32 + i * 0.18);
+      const wHalf = lw * (i === 1 ? 0.34 : 0.26);
+      ctx.beginPath();
+      ctx.moveTo(W / 2 - wHalf, y);
+      ctx.lineTo(W / 2 + wHalf, y);
+      ctx.stroke();
+    }
+  }
+  return ctx.canvas;
+}
+
+/** 精装布面封面 + 书脊（含竹节/烫金框/书名标签），全书共用，material.color 染色 */
+export function bookClothTexture(variant: BookBinding) {
+  return cached(`bookcloth-${variant}`, () => paintBookCloth(variant, 'color'), [1, 1]);
+}
+
+/** 精装装订的凹凸图：竹节棱线、压槽与标签凹痕 */
+export function bookClothBumpTexture(variant: BookBinding) {
+  return cached(`bookclothbump-${variant}`, () => paintBookCloth(variant, 'bump'), [1, 1], false);
 }
 
 /** 书页侧面：米黄纸张的细密页线 */
@@ -403,6 +618,32 @@ export function aoBlobTexture() {
     g.addColorStop(1, 'rgba(16,10,5,0)');
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, size, size);
+    return ctx.canvas;
+  }, [1, 1]);
+}
+
+/**
+ * 层板灯带的「光池」：前缘一条亮灯芯 + 向后渐隐的暖光，
+ * 以加色混合叠在层板顶面 —— 不用真实光源也能读出"灯带照亮这一格"。
+ * 注意：绘制时亮边画在画布底部，正对 planeGeometry 旋转后的 +Z（书架前方）。
+ */
+export function ledPoolTexture() {
+  return cached('led-pool', () => {
+    const W = 256;
+    const H = 128;
+    const ctx = canvas(W, H);
+    const g = ctx.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, 'rgba(255,176,96,0)');
+    g.addColorStop(0.45, 'rgba(255,182,106,0.16)');
+    g.addColorStop(0.85, 'rgba(255,190,116,0.34)');
+    g.addColorStop(1, 'rgba(255,200,130,0.5)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+    const core = ctx.createLinearGradient(0, H - 14, 0, H);
+    core.addColorStop(0, 'rgba(255,224,170,0)');
+    core.addColorStop(1, 'rgba(255,230,180,0.95)');
+    ctx.fillStyle = core;
+    ctx.fillRect(0, H - 14, W, 14);
     return ctx.canvas;
   }, [1, 1]);
 }

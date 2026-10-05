@@ -4,11 +4,34 @@ import type { ThreeEvent } from '@react-three/fiber';
 import { RoundedBox } from '@react-three/drei';
 import type { BookHit, Shelf } from '../types';
 import { registerLayerMesh } from './registry';
-import { aoBlobTexture, clothBumpTexture, clothTexture, coverColor, paperTexture, seededRandom, signTexture, woodBumpTexture, woodTexture } from './materials';
+import {
+  aoBlobTexture,
+  bookClothBumpTexture,
+  bookClothTexture,
+  coverColor,
+  fitGrainUVs,
+  ledPoolTexture,
+  paperTexture,
+  seededRandom,
+  signTexture,
+  veneerMaps,
+  type BookBinding,
+} from './materials';
 
 /** 板厚与立板厚度（米） */
 const PLANK_T = 0.03;
 const SIDE_T = 0.04;
+
+/** 木饰面一拍的物理尺寸（米），与 materials.ts 里的扫描件一致 */
+const OAK_TILE_M = 1.83;
+const WALNUT_TILE_M = 1.8;
+
+/** 橡木/胡桃饰面三件套：模块级加载一次，全站书架共享 */
+const OAK_VENEER = veneerMaps('oak');
+const WALNUT_VENEER = veneerMaps('walnut');
+
+/** 扫描法线强度：饰面木纹比地板更细，压一点才不像浮雕 */
+const WOOD_NORMAL_SCALE = new THREE.Vector2(0.8, 0.8);
 
 /** 纯装饰网格不参与射线：书架 Group 带事件，子网格会被递归拾取 */
 const noRaycast = () => null;
@@ -17,6 +40,84 @@ const noRaycast = () => null;
 function hoverCursor(on: boolean) {
   document.body.style.cursor = on ? 'pointer' : '';
 }
+
+/**
+ * 实木书架部件：BoxGeometry 的 UV 按物理尺寸重排（1 纹理单位 = 一拍饰面），
+ * 木纹永远顺着面的长边，每块料带随机相位 —— 同一架子里没有两块板纹路重样。
+ */
+const WoodPart = memo(function WoodPart({
+  w, h, d, position, kind = 'oak', seed = 1, castShadow, receiveShadow, raycast, tint = '#ffffff',
+}: {
+  w: number;
+  h: number;
+  d: number;
+  position: [number, number, number];
+  kind?: 'oak' | 'walnut';
+  seed?: number;
+  castShadow?: boolean;
+  receiveShadow?: boolean;
+  raycast?: () => null;
+  tint?: string;
+}) {
+  const geo = useMemo(() => {
+    const g = new THREE.BoxGeometry(w, h, d);
+    fitGrainUVs(g, [w, h, d], kind === 'oak' ? OAK_TILE_M : WALNUT_TILE_M, seededRandom(seed));
+    return g;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [w, h, d, kind, seed]);
+  useEffect(() => () => geo.dispose(), [geo]);
+  const v = kind === 'oak' ? OAK_VENEER : WALNUT_VENEER;
+  return (
+    <mesh geometry={geo} position={position} castShadow={castShadow} receiveShadow={receiveShadow} raycast={raycast}>
+      <meshStandardMaterial
+        map={v.map}
+        normalMap={v.normalMap}
+        normalScale={WOOD_NORMAL_SCALE}
+        roughnessMap={v.roughnessMap}
+        roughness={1}
+        metalness={0}
+        color={tint}
+        envMapIntensity={0.6}
+        emissive={'#3a2410'}
+        emissiveIntensity={0.22}
+      />
+    </mesh>
+  );
+});
+
+/**
+ * 层板下的暖光灯带：贴齐层板前缘（微凸 1mm，任何角度都读得出亮线），
+ * toneMapped=false 直出 HDR 经 Bloom 泛出柔光晕，悬停/命中该层时增亮。
+ */
+const LedStrip = memo(function LedStrip({ w, position, lit }: { w: number; position: [number, number, number]; lit: boolean }) {
+  return (
+    <mesh position={position} raycast={noRaycast}>
+      <boxGeometry args={[w, 0.005, 0.012]} />
+      <meshStandardMaterial
+        color={'#1a1206'}
+        emissive={'#ffc27a'}
+        emissiveIntensity={lit ? 2.3 : 1.35}
+        toneMapped={false}
+      />
+    </mesh>
+  );
+});
+
+/** 灯带在层板顶面留下的光池：加色叠亮，假装灯带洒下来的暖光 */
+const LedPool = memo(function LedPool({ w, d, y, lit }: { w: number; d: number; y: number; lit: boolean }) {
+  return (
+    <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, y, d / 2 - d * 0.22]} renderOrder={2} raycast={noRaycast}>
+      <planeGeometry args={[w, d * 0.44]} />
+      <meshBasicMaterial
+        map={ledPoolTexture()}
+        transparent
+        opacity={lit ? 0.95 : 0.62}
+        blending={THREE.AdditiveBlending}
+        depthWrite={false}
+      />
+    </mesh>
+  );
+});
 
 interface Props {
   shelf: Shelf;
@@ -38,7 +139,8 @@ interface Props {
 /**
  * 一个书架 = 一个 Group，位置/朝向直接来自数据库的 posX/posZ/rotation。
  * 层数由 shelf.type.layerCount 决定；外形程序化拼装：
- * 浅橡木侧板与层板、奶油漆背板、顶部帽线，书籍带布面封面与书页块。
+ * 扫描橡木饰面的侧板与层板、奶油漆背板、顶部帽线，层板前缘暖光灯带，
+ * 书籍为精装布面装订（书脊竹节 + 烫金框 + 可见书页块）。
  */
 export const ShelfMesh = memo(function ShelfMesh({
   shelf, books, shelfHi, hiLayerId, hiBookId, interactive, onPickLayer, onFocusBook, lockRef, onShelfDown,
@@ -49,9 +151,8 @@ export const ShelfMesh = memo(function ShelfMesh({
   const innerW = width - 2 * SIDE_T - 0.06;
   const spacing = innerW / slotsPerLayer;
 
-  const oak = woodTexture('warm');
-  const oakBump = woodBumpTexture('warm');
   const frameTint = shelfHi ? '#f0b050' : '#ffffff';
+  const frameSeed = shelf.id * 131;
 
   /** 按点击高度反查所在层：点框体、侧板、背板任意位置都能打开这一层的藏书面板 */
   const pickByHeight = (y: number) => {
@@ -99,12 +200,9 @@ export const ShelfMesh = memo(function ShelfMesh({
         <meshBasicMaterial map={aoBlobTexture()} transparent opacity={0.85} depthWrite={false} />
       </mesh>
 
-      {/* 两侧立板 */}
+      {/* 两侧立板：扫描橡木饰面 */}
       {[-1, 1].map((s) => (
-        <mesh key={s} position={[(s * (width - SIDE_T)) / 2, totalH / 2, 0]} castShadow>
-          <boxGeometry args={[SIDE_T, totalH, depth]} />
-          <meshStandardMaterial map={oak} bumpMap={oakBump} bumpScale={0.32} color={frameTint} roughness={0.62} metalness={0.03} envMapIntensity={0.55} />
-        </mesh>
+        <WoodPart key={s} w={SIDE_T} h={totalH} d={depth} position={[(s * (width - SIDE_T)) / 2, totalH / 2, 0]} seed={frameSeed + s} castShadow tint={frameTint} />
       ))}
 
       {/* 背板：奶油漆面板（现代简约），命中时整架泛暖 */}
@@ -114,18 +212,12 @@ export const ShelfMesh = memo(function ShelfMesh({
       </mesh>
 
       {/* 顶板 + 帽线、底座 */}
-      <mesh position={[0, totalH - PLANK_T / 2, 0]} castShadow>
-        <boxGeometry args={[width, PLANK_T, depth]} />
-        <meshStandardMaterial map={oak} bumpMap={oakBump} bumpScale={0.32} color={frameTint} roughness={0.62} envMapIntensity={0.55} />
-      </mesh>
-      <mesh position={[0, totalH + 0.021, 0.006]} castShadow raycast={noRaycast}>
-        <boxGeometry args={[width + 0.06, 0.038, depth + 0.04]} />
-        <meshStandardMaterial map={oak} bumpMap={oakBump} bumpScale={0.32} color={frameTint} roughness={0.5} envMapIntensity={0.6} />
-      </mesh>
-      <mesh position={[0, PLANK_T / 2, 0]} receiveShadow raycast={noRaycast}>
-        <boxGeometry args={[width, PLANK_T, depth]} />
-        <meshStandardMaterial map={oak} bumpMap={oakBump} bumpScale={0.32} color={frameTint} roughness={0.62} envMapIntensity={0.55} />
-      </mesh>
+      <WoodPart w={width} h={PLANK_T} d={depth} position={[0, totalH - PLANK_T / 2, 0]} seed={frameSeed + 11} castShadow tint={frameTint} />
+      <WoodPart w={width + 0.06} h={0.038} d={depth + 0.04} position={[0, totalH + 0.021, 0.006]} seed={frameSeed + 12} castShadow raycast={noRaycast} tint={frameTint} />
+      <WoodPart w={width} h={PLANK_T} d={depth} position={[0, PLANK_T / 2, 0]} seed={frameSeed + 13} receiveShadow raycast={noRaycast} tint={frameTint} />
+
+      {/* 顶层天花板的灯带（其余层由各自上方层板下的灯带照亮） */}
+      <LedStrip w={innerW + 0.02} position={[0, totalH - PLANK_T - 0.0035, depth / 2 - 0.005]} lit={shelfHi} />
 
       {/* 层：按 layerCount 程序生成 */}
       {shelf.layers.map((layer) => (
@@ -138,7 +230,7 @@ export const ShelfMesh = memo(function ShelfMesh({
           depth={depth}
           innerW={innerW}
           spacing={spacing}
-          shelfSeed={shelf.id * 131}
+          shelfSeed={frameSeed}
           books={byLayer.get(layer.id) ?? EMPTY_BOOKS}
           highlighted={hiLayerId === layer.id}
           highlightBookId={hiBookId}
@@ -211,11 +303,8 @@ const ShelfTag = memo(function ShelfTag({
 
   return (
     <group position={[0, topY, 0]}>
-      {/* 底座：深木色窄条，压住两块斜面板的脚 */}
-      <mesh position={[0, 0.008, 0]} castShadow raycast={noRaycast}>
-        <boxGeometry args={[signW, 0.016, baseHalf * 2 + 0.02]} />
-        <meshStandardMaterial map={woodTexture('dark')} roughness={0.55} />
-      </mesh>
+      {/* 底座：深胡桃饰面窄条，压住两块斜面板的脚 */}
+      <WoodPart w={signW} h={0.016} d={baseHalf * 2 + 0.02} position={[0, 0.008, 0]} kind="walnut" seed={41} raycast={noRaycast} castShadow />
 
       {/* 正面斜板：+Z 面贴牌面纹理 */}
       <mesh position={[0, 0.016 + ridgeH / 2, baseHalf / 2]} rotation={[-tilt, 0, 0]} castShadow raycast={noRaycast}>
@@ -299,6 +388,16 @@ const LayerGroup = memo(function LayerGroup({
   const plankY = floorTop - PLANK_T / 2;
   const lit = highlighted || hover;
 
+  // 层板几何：UV 按物理尺寸铺橡木饰面（每层随机相位，板板纹路不同）
+  const plankGeo = useMemo(() => {
+    const w = width - 2 * SIDE_T;
+    const g = new THREE.BoxGeometry(w, PLANK_T, depth);
+    fitGrainUVs(g, [w, PLANK_T, depth], OAK_TILE_M, seededRandom(shelfSeed * 3 + layerIndex));
+    return g;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [width, depth, shelfSeed, layerIndex]);
+  useEffect(() => () => plankGeo.dispose(), [plankGeo]);
+
   return (
     <group>
       {/* 该层的整格拾取体积（不可见）：从正面点任意高度都算命中这一层 */}
@@ -310,6 +409,7 @@ const LayerGroup = memo(function LayerGroup({
       {/* 层板（悬停即热，点击反查该层藏书） */}
       <mesh
         ref={plankRef}
+        geometry={plankGeo}
         position={[0, plankY, 0]}
         castShadow
         receiveShadow
@@ -321,18 +421,23 @@ const LayerGroup = memo(function LayerGroup({
           onPick({ shelfId, shelfCode, layerId, layerIndex });
         }}
       >
-        <boxGeometry args={[width - 2 * SIDE_T, PLANK_T, depth]} />
         <meshStandardMaterial
-          map={woodTexture('warm')}
-          bumpMap={woodBumpTexture('warm')}
-          bumpScale={0.3}
+          map={OAK_VENEER.map}
+          normalMap={OAK_VENEER.normalMap}
+          normalScale={WOOD_NORMAL_SCALE}
+          roughnessMap={OAK_VENEER.roughnessMap}
+          roughness={1}
+          metalness={0}
           color={highlighted ? '#ffd76a' : hover ? '#ffe9c4' : '#ffffff'}
           emissive={highlighted ? '#ff8c00' : '#000000'}
           emissiveIntensity={highlighted ? 0.5 : 0}
-          roughness={0.6}
-          envMapIntensity={lit ? 0.75 : 0.5}
+          envMapIntensity={lit ? 0.75 : 0.6}
         />
       </mesh>
+
+      {/* 层板前缘下的暖光灯带 + 层板顶面的光池：往下照亮这一格的书 */}
+      <LedStrip w={width - 2 * SIDE_T - 0.02} position={[0, plankY - PLANK_T / 2 - 0.0035, depth / 2 - 0.005]} lit={lit} />
+      <LedPool w={width - 2 * SIDE_T - 0.01} d={depth} y={floorTop + 0.0006} lit={lit} />
 
       {/* 该层上的书，按 slotIndex 依次排开 */}
       {books.map((b) => (
@@ -368,14 +473,16 @@ interface BookProps {
 }
 
 /**
- * 一本"写实"的书 = 布面封面板块 + 内嵌的书页块 + 书脊烫金饰带。
+ * 一本"精装"书：布面硬壳（书脊竹节棱线 + 全周烫金框 + 烫金书名标签）
+ * + 从顶部与书口真正露出的米白书页块。
  * 高矮厚薄与轻微倾斜按 id 播种的伪随机决定：同一本书每次刷新姿态一致，
  * 但整排书看起来像真实排架，而不是复制粘贴的方块。
+ * 装订版式（竹节数量/标签位置）也按种子在两套里选，整排书细节不重样。
  */
 const BookMesh = memo(function BookMesh({
   book, floorTop, innerW, spacing, layerHeight, depth, shelfSeed, isHi, interactive, onFocusBook,
 }: BookProps) {
-  const { t, h, tilt, zOff, hasBand, rough } = useMemo(() => {
+  const { t, h, tilt, zOff, binding, rough } = useMemo(() => {
     const rnd = seededRandom(book.id * 7919 + shelfSeed);
     const maxT = spacing * 0.92;
     return {
@@ -383,9 +490,9 @@ const BookMesh = memo(function BookMesh({
       h: layerHeight * (0.62 + rnd() * 0.22),
       tilt: rnd() < 0.12 ? (rnd() - 0.5) * 0.16 : 0,
       zOff: -depth * 0.06 + rnd() * depth * 0.05,
-      hasBand: rnd() < 0.5,
+      binding: (rnd() < 0.55 ? 0 : 1) as BookBinding,
       // 每本书的布面粗糙度略有差异，避免整排书反射一模一样（塑料感的来源）
-      rough: 0.74 + rnd() * 0.2,
+      rough: 0.72 + rnd() * 0.18,
     };
   }, [book.id, shelfSeed, spacing, layerHeight, depth]);
 
@@ -421,31 +528,24 @@ const BookMesh = memo(function BookMesh({
         onFocusBook(book);
       }}
     >
-      {/* 封面（布面，微圆角：棱边能接住高光，不再是硬邦邦的塑料方块） */}
-      <RoundedBox args={[t, h, bookD]} radius={Math.min(0.004, t * 0.16)} smoothness={3} position={[0, h / 2, 0]} castShadow>
+      {/* 精装硬壳：微圆角布面，书脊面与封面共用装订贴图（竹节/烫金框/标签随染色变铜箔） */}
+      <RoundedBox args={[t, h, bookD]} radius={Math.min(0.0035, t * 0.14)} smoothness={3} position={[0, h / 2, 0]} castShadow>
         <meshStandardMaterial
-          map={clothTexture()}
-          bumpMap={clothBumpTexture()}
-          bumpScale={0.6}
+          map={bookClothTexture(binding)}
+          bumpMap={bookClothBumpTexture(binding)}
+          bumpScale={0.55}
           color={isHi ? '#ffe066' : hover ? cover.clone().multiplyScalar(1.55) : cover}
           emissive={isHi ? '#ffdf70' : hover ? '#3a2a12' : '#000000'}
           emissiveIntensity={isHi ? 0.55 : hover ? 0.5 : 0}
           roughness={rough}
-          envMapIntensity={hover || isHi ? 0.75 : 0.42}
+          envMapIntensity={hover || isHi ? 0.75 : 0.45}
         />
       </RoundedBox>
-      {/* 书页块：略窄略短，从顶部与书口露出米白页边 */}
-      <mesh position={[0, h / 2 + 0.003, -0.004]} raycast={noRaycast}>
-        <boxGeometry args={[t * 0.8, h - 0.012, bookD - 0.014]} />
-        <meshStandardMaterial map={paperTexture()} color={'#e6d9ba'} roughness={0.95} envMapIntensity={0.18} />
+      {/* 书页块：与封面同轴心，顶部微凸 4.5mm、书口侧探出 1mm —— 米白页边真正可见 */}
+      <mesh position={[t * 0.05, h / 2 + 0.002, -bookD * 0.03]} raycast={noRaycast}>
+        <boxGeometry args={[t * 0.94, h + 0.005, bookD * 0.85]} />
+        <meshStandardMaterial map={paperTexture()} color={'#e6dabd'} roughness={0.95} envMapIntensity={0.2} />
       </mesh>
-      {/* 书脊烫金饰带 */}
-      {hasBand && h > 0.16 && (
-        <mesh position={[0, h * 0.74, bookD / 2 + 0.0008]} raycast={noRaycast}>
-          <boxGeometry args={[t * 0.62, 0.008, 0.002]} />
-          <meshStandardMaterial color={'#c39a4e'} roughness={0.35} metalness={0.55} />
-        </mesh>
-      )}
     </group>
   );
 });
